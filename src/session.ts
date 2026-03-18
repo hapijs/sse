@@ -1,0 +1,174 @@
+import type { Request } from '@hapi/hapi';
+import type { ServerResponse } from 'node:http';
+
+import { EventBuffer } from './event-buffer.ts';
+
+export interface BackpressureOptions {
+    maxBytes: number;
+    strategy: 'close' | 'drop';
+}
+
+export interface SessionOptions {
+    request: Request;
+    retry: number | null;
+    keepAlive: { interval: number } | false;
+    headers: Record<string, string>;
+    backpressure?: BackpressureOptions;
+}
+
+export class Session {
+    readonly request: Request;
+    readonly lastEventId: string;
+    readonly connectedAt: number;
+    readonly #res: ServerResponse;
+    readonly #buffer: EventBuffer;
+    readonly #retry: number | null;
+    readonly #keepAlive: { interval: number } | false;
+    readonly #headers: Record<string, string>;
+    readonly #backpressure: BackpressureOptions | undefined;
+    readonly #metadata = new Map<string, unknown>();
+    #keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    #closed = false;
+
+    constructor(options: SessionOptions) {
+        this.request = options.request;
+        this.connectedAt = Date.now();
+
+        const rawId = options.request.headers['last-event-id'];
+
+        this.lastEventId = (Array.isArray(rawId) ? rawId[0] : rawId) ?? '';
+        this.#res = options.request.raw.res;
+        this.#buffer = new EventBuffer();
+        this.#retry = options.retry;
+        this.#keepAlive = options.keepAlive;
+        this.#headers = options.headers;
+        this.#backpressure = options.backpressure;
+    }
+
+    get isOpen(): boolean {
+        return !this.#closed;
+    }
+
+    set(key: string, value: unknown): void {
+        this.#metadata.set(key, value);
+    }
+
+    get(key: string): unknown {
+        return this.#metadata.get(key);
+    }
+
+    has(key: string): boolean {
+        return this.#metadata.has(key);
+    }
+
+    delete(key: string): boolean {
+        return this.#metadata.delete(key);
+    }
+
+    initialize(): void {
+        this.#res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            ...this.#headers,
+        });
+
+        const socket = this.request.raw.req.socket;
+
+        if ('setNoDelay' in socket) {
+            (socket as { setNoDelay: (v: boolean) => void }).setNoDelay(true);
+        }
+
+        if (this.#retry !== null) {
+            this.#buffer.retry(this.#retry);
+        }
+
+        this.#buffer.comment('ok');
+        this.#buffer.dispatch();
+        this.#flush();
+
+        if (this.#keepAlive) {
+            this.#keepAliveTimer = setInterval(() => {
+                if (this.#closed) {
+                    return;
+                }
+
+                this.#buffer.comment();
+                this.#buffer.dispatch();
+                this.#flush();
+            }, this.#keepAlive.interval);
+        }
+    }
+
+    push(data: unknown, event?: string, id?: string): boolean {
+        if (this.#closed) {
+            return false;
+        }
+
+        this.#buffer.push(data, event, id);
+
+        if (this.#backpressure) {
+            const payload = this.#buffer.read();
+            const pendingBytes = this.#res.writableLength + Buffer.byteLength(payload, 'utf8');
+
+            if (pendingBytes > this.#backpressure.maxBytes) {
+                this.#buffer.clear();
+
+                if (this.#backpressure.strategy === 'close') {
+                    this.close();
+                }
+
+                return false;
+            }
+        }
+
+        this.#flush();
+
+        return true;
+    }
+
+    comment(text?: string): void {
+        if (this.#closed) {
+            return;
+        }
+
+        this.#buffer.comment(text);
+        this.#buffer.dispatch();
+        this.#flush();
+    }
+
+    close(): void {
+        if (this.#closed) {
+            return;
+        }
+
+        this.#closed = true;
+
+        if (this.#keepAliveTimer) {
+            clearInterval(this.#keepAliveTimer);
+            this.#keepAliveTimer = null;
+        }
+
+        this.#res.end();
+    }
+
+    #flush(): boolean {
+        const data = this.#buffer.read();
+
+        if (data) {
+            try {
+                this.#res.write(data);
+            } catch {
+                this.#buffer.clear();
+                this.close();
+
+                return false;
+            }
+
+            this.#buffer.clear();
+        }
+
+        return true;
+    }
+}
