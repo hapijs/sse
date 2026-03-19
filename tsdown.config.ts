@@ -1,9 +1,13 @@
 import { defineConfig } from 'tsdown';
+import type { UserConfig } from 'tsdown';
 
-export default defineConfig({
+const config: UserConfig = defineConfig({
     entry: ['./src/index.ts'],
     outDir: './dist',
     exports: true,
+    dts: true,
     format: 'esm',
     target: 'node22'
 });
+
+export default config;

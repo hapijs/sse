@@ -1,12 +1,12 @@
 import type { NamedPlugin, Request, ResponseToolkit, RouteOptions, Lifecycle } from '@hapi/hapi';
 import { createRequire } from 'node:module';
 
-import { Session } from './session.ts';
-import type { BackpressureOptions } from './session.ts';
-import { SubscriptionRegistry } from './subscription.ts';
+import { Session } from './session.js';
+import type { BackpressureOptions } from './session.js';
+import { SubscriptionRegistry } from './subscription.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
-import type { SubscriptionConfig, SubscriptionInfo, FilterOptions } from './subscription.ts';
+import type { SubscriptionConfig, SubscriptionInfo, FilterOptions } from './subscription.js';
 
 export type { SubscriptionConfig, SubscriptionInfo, FilterOptions };
 

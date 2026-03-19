@@ -1,7 +1,7 @@
 import type { RouteOptions } from '@hapi/hapi';
 
-import { Session } from './session.ts';
-import type { Replayer } from './replayer.ts';
+import { Session } from './session.js';
+import type { Replayer } from './replayer.js';
 
 export interface FilterOptions {
     credentials: unknown;
@@ -44,7 +44,9 @@ interface SessionInfo {
 }
 
 export class SubscriptionRegistry {
+    /** @internal */
     readonly #subscriptions = new Map<string, CompiledSubscription>();
+    /** @internal */
     readonly #sessionInfo = new Map<Session, SessionInfo>();
 
     register(pattern: string, config: SubscriptionConfig): void {

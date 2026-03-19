@@ -1,7 +1,7 @@
 import type { Request } from '@hapi/hapi';
 import type { ServerResponse } from 'node:http';
 
-import { EventBuffer } from './event-buffer.ts';
+import { EventBuffer } from './event-buffer.js';
 
 export interface BackpressureOptions {
     maxBytes: number;
@@ -20,14 +20,23 @@ export class Session {
     readonly request: Request;
     readonly lastEventId: string;
     readonly connectedAt: number;
+    /** @internal */
     readonly #res: ServerResponse;
+    /** @internal */
     readonly #buffer: EventBuffer;
+    /** @internal */
     readonly #retry: number | null;
+    /** @internal */
     readonly #keepAlive: { interval: number } | false;
+    /** @internal */
     readonly #headers: Record<string, string>;
+    /** @internal */
     readonly #backpressure: BackpressureOptions | undefined;
+    /** @internal */
     readonly #metadata = new Map<string, unknown>();
+    /** @internal */
     #keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    /** @internal */
     #closed = false;
 
     constructor(options: SessionOptions) {
@@ -89,16 +98,19 @@ export class Session {
         this.#flush();
 
         if (this.#keepAlive) {
-            this.#keepAliveTimer = setInterval(() => {
-                if (this.#closed) {
-                    return;
-                }
-
-                this.#buffer.comment();
-                this.#buffer.dispatch();
-                this.#flush();
-            }, this.#keepAlive.interval);
+            this.#keepAliveTimer = setInterval(() => this.#onKeepAlive(), this.#keepAlive.interval);
         }
+    }
+
+    /** @internal */
+    #onKeepAlive(): void {
+        if (this.#closed) {
+            return;
+        }
+
+        this.#buffer.comment();
+        this.#buffer.dispatch();
+        this.#flush();
     }
 
     push(data: unknown, event?: string, id?: string): boolean {
@@ -153,6 +165,7 @@ export class Session {
         this.#res.end();
     }
 
+    /** @internal */
     #flush(): boolean {
         const data = this.#buffer.read();
 

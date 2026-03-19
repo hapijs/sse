@@ -1,8 +1,8 @@
 import { expect, describe, it } from 'vitest';
 
-import { EventBuffer } from './event-buffer.ts';
+import { EventBuffer } from '../src/event-buffer.js';
 
-describe('EventBuffer', () => {
+describe.concurrent('EventBuffer', () => {
     it('serializes string data', () => {
         const buf = new EventBuffer();
 

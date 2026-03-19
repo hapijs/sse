@@ -11,9 +11,13 @@ export interface Replayer {
 }
 
 export class FiniteReplayer implements Replayer {
+    /** @internal */
     readonly #size: number;
+    /** @internal */
     readonly #autoId: boolean;
+    /** @internal */
     readonly #buffer: ReplayEntry[] = [];
+    /** @internal */
     #counter = 0;
 
     constructor(opts: { size: number; autoId?: boolean }) {
@@ -51,10 +55,15 @@ interface TimedEntry extends ReplayEntry {
 }
 
 export class ValidReplayer implements Replayer {
+    /** @internal */
     readonly #ttl: number;
+    /** @internal */
     readonly #autoId: boolean;
+    /** @internal */
     readonly #buffer: TimedEntry[] = [];
+    /** @internal */
     #timer: ReturnType<typeof setInterval> | null = null;
+    /** @internal */
     #counter = 0;
 
     constructor(opts: { ttl: number; autoId?: boolean }) {
@@ -94,6 +103,7 @@ export class ValidReplayer implements Replayer {
         }
     }
 
+    /** @internal */
     #gc(): void {
         const now = Date.now();
 

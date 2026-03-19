@@ -1,4 +1,5 @@
 export class EventBuffer {
+    /** @internal */
     #buffer = '';
 
     data(value: unknown): this {
