@@ -1,4 +1,5 @@
 import type { NamedPlugin, Request, ResponseToolkit, RouteOptions, Lifecycle } from '@hapi/hapi';
+import Boom from '@hapi/boom';
 import { createRequire } from 'node:module';
 
 import { Session } from './session.js';
@@ -30,6 +31,7 @@ export interface SseHandlerOptions {
     keepAlive?: { interval: number } | false;
     headers?: Record<string, string>;
     backpressure?: BackpressureOptions;
+    maxDuration?: number;
 }
 
 export interface SseStats {
@@ -65,6 +67,12 @@ declare module '@hapi/hapi' {
         sse?: SseHandlerOptions;
     }
 }
+
+const RETRY_FLOOR = 1000;
+
+const clampRetry = (value: number | null): number | null => {
+    return value === null ? null : Math.max(value, RETRY_FLOOR);
+};
 
 const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure'>> = {
     keepAlive: { interval: 15_000 },
@@ -103,12 +111,19 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                     handler: async (request: Request, h: ResponseToolkit) => {
                         const matched = registry.matchPath(request.path)!;
 
+                        const maxSessions = (subConfig as SubscriptionConfig).maxSessions;
+
+                        if (maxSessions && registry.subscriptionSessionCount(matched.pattern) >= maxSessions) {
+                            return Boom.serverUnavailable('Too many connections');
+                        }
+
                         const session = new Session({
                             request,
-                            retry: subConfig.retry ?? config.retry,
+                            retry: clampRetry(subConfig.retry ?? config.retry),
                             keepAlive: subConfig.keepAlive ?? config.keepAlive,
                             headers: config.headers,
                             backpressure: options.backpressure,
+                            maxDuration: (subConfig as SubscriptionConfig).maxDuration,
                         });
 
                         if (subConfig.onSubscribe) {
@@ -219,10 +234,11 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
             return async (request: Request, h: ResponseToolkit): Promise<Lifecycle.ReturnValue> => {
                 const session = new Session({
                     request,
-                    retry: handlerOptions.retry ?? config.retry,
+                    retry: clampRetry(handlerOptions.retry ?? config.retry),
                     keepAlive: handlerOptions.keepAlive ?? config.keepAlive,
                     headers: handlerOptions.headers ?? config.headers,
                     backpressure: handlerOptions.backpressure ?? options.backpressure,
+                    maxDuration: handlerOptions.maxDuration,
                 });
 
                 session.initialize();

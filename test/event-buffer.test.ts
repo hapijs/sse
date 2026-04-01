@@ -291,4 +291,76 @@ describe.concurrent('EventBuffer', () => {
 
         expect(buf.read()).toBe('event: testinjection\n');
     });
+
+    // Security: retry field CRLF injection (CVE-2026-33128 pattern)
+
+    it('retry rejects string coercion with CRLF injection payload', () => {
+        const buf = new EventBuffer();
+
+        // @ts-expect-error — runtime safety for non-TS callers
+        expect(() => buf.retry('3000\ndata: injected')).toThrow('non-negative integer');
+    });
+
+    it('retry rejects string-number coercion', () => {
+        const buf = new EventBuffer();
+
+        // @ts-expect-error — runtime safety for non-TS callers
+        expect(() => buf.retry('1000')).toThrow('non-negative integer');
+    });
+
+    // Security: combined injection via push()
+
+    it('push() with CRLF in event name does not create extra fields', () => {
+        const buf = new EventBuffer();
+
+        buf.push('safe', 'msg\nevent: spoofed', '1');
+
+        const output = buf.read();
+        const eventLines = output.split('\n').filter((l) => l.startsWith('event:'));
+
+        expect(eventLines.length).toBe(1);
+        expect(eventLines[0]).toBe('event: msgevent: spoofed');
+    });
+
+    it('push() with CRLF in id does not create extra fields', () => {
+        const buf = new EventBuffer();
+
+        buf.push('safe', 'msg', '1\nid: spoofed');
+
+        const output = buf.read();
+        const idLines = output.split('\n').filter((l) => l.startsWith('id:'));
+
+        expect(idLines.length).toBe(1);
+        expect(idLines[0]).toBe('id: 1id: spoofed');
+    });
+
+    it('push() with CRLF in data splits into safe data fields (no field injection)', () => {
+        const buf = new EventBuffer();
+
+        buf.push('line1\nevent: spoofed\ndata: injected');
+
+        const output = buf.read();
+        const lines = output.split('\n').filter((l) => l.length > 0);
+
+        // Every non-empty line must be a data: field — no standalone event:/id:/retry: lines
+        for (const line of lines) {
+            expect(line.startsWith('data:')).toBe(true);
+        }
+
+        // The "event: spoofed" text is safely wrapped inside a data: field
+        expect(output).toContain('data: event: spoofed');
+        expect(output).not.toMatch(/^event:/m);
+    });
+
+    it('comment() with injection payload splits safely', () => {
+        const buf = new EventBuffer();
+
+        buf.comment('keepalive\ndata: injected\nevent: spoofed');
+
+        const output = buf.read();
+
+        for (const line of output.split('\n').filter((l) => l.length > 0)) {
+            expect(line.startsWith(':')).toBe(true);
+        }
+    });
 });

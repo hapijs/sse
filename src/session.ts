@@ -14,6 +14,7 @@ export interface SessionOptions {
     keepAlive: { interval: number } | false;
     headers: Record<string, string>;
     backpressure?: BackpressureOptions;
+    maxDuration?: number;
 }
 
 export class Session {
@@ -33,9 +34,13 @@ export class Session {
     /** @internal */
     readonly #backpressure: BackpressureOptions | undefined;
     /** @internal */
+    readonly #maxDuration: number | undefined;
+    /** @internal */
     readonly #metadata = new Map<string, unknown>();
     /** @internal */
     #keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    /** @internal */
+    #maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
     /** @internal */
     #closed = false;
 
@@ -45,13 +50,14 @@ export class Session {
 
         const rawId = options.request.headers['last-event-id'];
 
-        this.lastEventId = (Array.isArray(rawId) ? rawId[0] : rawId) ?? '';
+        this.lastEventId = ((Array.isArray(rawId) ? rawId[0] : rawId) ?? '').replace(/[\x00-\x1f]/g, '');
         this.#res = options.request.raw.res;
         this.#buffer = new EventBuffer();
         this.#retry = options.retry;
         this.#keepAlive = options.keepAlive;
         this.#headers = options.headers;
         this.#backpressure = options.backpressure;
+        this.#maxDuration = options.maxDuration;
     }
 
     get isOpen(): boolean {
@@ -99,6 +105,15 @@ export class Session {
 
         if (this.#keepAlive) {
             this.#keepAliveTimer = setInterval(() => this.#onKeepAlive(), this.#keepAlive.interval);
+        }
+
+        if (this.#maxDuration) {
+            const jitter = this.#maxDuration * 0.1 * (2 * Math.random() - 1);
+
+            this.#maxDurationTimer = setTimeout(() => {
+                this.comment('session expired');
+                this.close();
+            }, this.#maxDuration + jitter);
         }
     }
 
@@ -160,6 +175,11 @@ export class Session {
         if (this.#keepAliveTimer) {
             clearInterval(this.#keepAliveTimer);
             this.#keepAliveTimer = null;
+        }
+
+        if (this.#maxDurationTimer) {
+            clearTimeout(this.#maxDurationTimer);
+            this.#maxDurationTimer = null;
         }
 
         this.#res.end();

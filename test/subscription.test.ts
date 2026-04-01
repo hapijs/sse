@@ -69,13 +69,32 @@ describe.concurrent('SubscriptionRegistry', () => {
         expect(delivered).toBe(0);
     });
 
-    it('addSession does nothing for a non-existent subscription', () => {
+    it('addSession returns false for a non-existent subscription', () => {
         const registry = new SubscriptionRegistry();
         const session = { request: { headers: {} } } as any;
 
         // No subscription registered for '/events'
-        registry.addSession('/events', session, {}, '/events');
+        expect(registry.addSession('/events', session, {}, '/events')).toBe(false);
         expect(registry.getSessionInfo(session)).toBeUndefined();
+    });
+
+    it('addSession returns false when maxSessions is reached', () => {
+        const registry = new SubscriptionRegistry();
+        const s1 = { request: { headers: {} } } as any;
+        const s2 = { request: { headers: {} } } as any;
+
+        registry.register('/events', { maxSessions: 1 });
+
+        expect(registry.addSession('/events', s1, {}, '/events')).toBe(true);
+        expect(registry.addSession('/events', s2, {}, '/events')).toBe(false);
+        expect(registry.getSessionInfo(s2)).toBeUndefined();
+        expect(registry.subscriptionSessionCount('/events')).toBe(1);
+    });
+
+    it('subscriptionSessionCount returns 0 for non-existent pattern', () => {
+        const registry = new SubscriptionRegistry();
+
+        expect(registry.subscriptionSessionCount('/nope')).toBe(0);
     });
 
     it('publish correctly handles failed pushes with filter override', async () => {

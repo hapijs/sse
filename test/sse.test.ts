@@ -1,6 +1,7 @@
 import * as timers from 'node:timers/promises';
 import { expect, describe, it } from 'vitest';
 import http from 'node:http';
+import net from 'node:net';
 
 import Hapi from '@hapi/hapi';
 import Boom from '@hapi/boom';
@@ -3221,6 +3222,655 @@ describe.concurrent('SSE Plugin', () => {
         expect(events.length).toBe(1);
         expect(events[0]).toContain('data: {"msg":"hello from decorator"}');
     });
+
+    // ========================================================================
+    // Security Tests — SSE Security Research Gap Coverage
+    // Ref: sse-security/research/conclusion.md
+    // ========================================================================
+
+    // --- Injection: Last-Event-ID CRLF (CWE-93) ---
+
+    it('Last-Event-ID with CRLF via raw TCP is split by HTTP parser (value truncated at newline)', async ({
+        onTestFinished,
+    }) => {
+        let capturedId = '';
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            onReconnect: (session) => {
+                capturedId = session.lastEventId;
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port as number;
+
+        const response = await new Promise<string>((resolve) => {
+            const socket = net.createConnection({ port }, () => {
+                socket.write(
+                    'GET /events HTTP/1.1\r\n' +
+                        `Host: localhost:${port}\r\n` +
+                        'Last-Event-ID: 123\r\nX-Injected: evil\r\n' +
+                        'Connection: close\r\n' +
+                        '\r\n',
+                );
+            });
+
+            let data = '';
+
+            socket.on('data', (chunk) => {
+                data += chunk.toString();
+            });
+
+            socket.on('end', () => resolve(data));
+            socket.on('error', () => resolve(data));
+
+            setTimeout(() => {
+                socket.destroy();
+                resolve(data);
+            }, 500);
+        });
+
+        expect(response).toContain('HTTP/1.1 200');
+        expect(capturedId).toBe('123');
+    });
+
+    it('Last-Event-ID value is not echoed back into SSE stream', async ({ onTestFinished }) => {
+        let capturedId = '';
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            onReconnect: (session) => {
+                capturedId = session.lastEventId;
+                session.push({ reconnected: true }, 'msg', '2');
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port;
+
+        const maliciousId = '<script>alert(1)</script>';
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(
+                `http://localhost:${port}/events`,
+                { headers: { 'Last-Event-ID': maliciousId } },
+                (res) => {
+                    res.setEncoding('utf8');
+                    res.on('data', (chunk: string) => {
+                        data += chunk;
+                        setTimeout(() => {
+                            req.destroy();
+                            resolve(data);
+                        }, 100);
+                    });
+                },
+            );
+
+            req.on('error', () => {});
+        });
+
+        expect(capturedId).toBe(maliciousId);
+        expect(raw).not.toContain(maliciousId);
+    });
+
+    it('Last-Event-ID with null character via raw TCP does not crash server', async ({ onTestFinished }) => {
+        let capturedId = '';
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            onReconnect: (session) => {
+                capturedId = session.lastEventId;
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port as number;
+
+        const response = await new Promise<string>((resolve) => {
+            const socket = net.createConnection({ port }, () => {
+                socket.write(
+                    'GET /events HTTP/1.1\r\n' +
+                        `Host: localhost:${port}\r\n` +
+                        'Last-Event-ID: abc\0def\r\n' +
+                        'Connection: close\r\n' +
+                        '\r\n',
+                );
+            });
+
+            let data = '';
+
+            socket.on('data', (chunk) => {
+                data += chunk.toString();
+            });
+
+            socket.on('end', () => resolve(data));
+            socket.on('error', () => resolve(data));
+
+            setTimeout(() => {
+                socket.destroy();
+                resolve(data);
+            }, 500);
+        });
+
+        expect(response).toContain('HTTP/1.1');
+    });
+
+    // --- DoS: Retry Floor Enforcement (reconnection storm prevention) ---
+
+    it('retry: 0 is clamped to 1000ms floor', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 0, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                    setTimeout(() => {
+                        req.destroy();
+                        resolve(data);
+                    }, 50);
+                });
+            });
+
+            req.on('error', () => {});
+        });
+
+        expect(raw).not.toContain('retry: 0');
+        expect(raw).toContain('retry: 1000');
+    });
+
+    it('retry: 500 is clamped to 1000ms floor', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 500, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                    setTimeout(() => {
+                        req.destroy();
+                        resolve(data);
+                    }, 50);
+                });
+            });
+
+            req.on('error', () => {});
+        });
+
+        expect(raw).not.toContain('retry: 500');
+        expect(raw).toContain('retry: 1000');
+    });
+
+    it('retry: 2000 is not clamped (above floor)', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 2000, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                    setTimeout(() => {
+                        req.destroy();
+                        resolve(data);
+                    }, 50);
+                });
+            });
+
+            req.on('error', () => {});
+        });
+
+        expect(raw).toContain('retry: 2000');
+    });
+
+    it('retry: null still disables retry field entirely', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                    setTimeout(() => {
+                        req.destroy();
+                        resolve(data);
+                    }, 50);
+                });
+            });
+
+            req.on('error', () => {});
+        });
+
+        expect(raw).not.toContain('retry:');
+    });
+
+    it('subscription-level retry below floor is clamped', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 2000, keepAlive: false } });
+        server.sse.subscription('/events', { retry: 100 });
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                    setTimeout(() => {
+                        req.destroy();
+                        resolve(data);
+                    }, 50);
+                });
+            });
+
+            req.on('error', () => {});
+        });
+
+        expect(raw).not.toMatch(/retry: 100\n/);
+        expect(raw).toContain('retry: 1000');
+    });
+
+    // --- Session Security: Cross-Client Data Isolation ---
+
+    it('concurrent clients on same subscription receive only their own replay data', async ({ onTestFinished }) => {
+        const replayer = new FiniteReplayer({ size: 100, autoId: true });
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', { replay: replayer });
+        await server.start();
+
+        const port = server.info.port;
+
+        const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
+
+        await timers.setTimeout(50);
+
+        await server.sse.publish('/events', { n: 1 }, { event: 'msg', id: '1' });
+        await p1;
+
+        await server.sse.publish('/events', { n: 2 }, { event: 'msg', id: '2' });
+        await server.sse.publish('/events', { n: 3 }, { event: 'msg', id: '3' });
+
+        const [clientB, clientC] = await Promise.all([
+            collectSse(`http://localhost:${port}/events`, {
+                maxEvents: 2,
+                headers: { 'Last-Event-ID': '1' },
+            }),
+            collectSse(`http://localhost:${port}/events`, {
+                maxEvents: 1,
+                timeout: 300,
+            }),
+        ]);
+
+        expect(clientB.events.length).toBe(2);
+        expect(clientB.events[0]).toContain('data: {"n":2}');
+        expect(clientB.events[1]).toContain('data: {"n":3}');
+
+        expect(clientC.events.length).toBe(0);
+    });
+
+    it('session metadata is isolated between concurrent clients', async ({ onTestFinished }) => {
+        const metadata: Array<{ id: string; peer: unknown }> = [];
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            onSubscribe: (session) => {
+                const id = Math.random().toString(36).slice(2);
+
+                session.set('clientId', id);
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port;
+
+        const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
+        const p2 = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
+
+        await timers.setTimeout(50);
+
+        await server.sse.eachSession((session) => {
+            const id = session.get('clientId') as string;
+
+            metadata.push({ id, peer: session.get('peerSecret') });
+        });
+
+        await Promise.all([p1, p2]);
+
+        expect(metadata.length).toBe(2);
+        expect(metadata[0].id).not.toBe(metadata[1].id);
+        expect(metadata[0].peer).toBeUndefined();
+        expect(metadata[1].peer).toBeUndefined();
+    });
+
+    it('filter receives per-session credentials without cross-leak', async ({ onTestFinished }) => {
+        const credentialsSeen: unknown[] = [];
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            filter: (_path, _message, options) => {
+                credentialsSeen.push(options.credentials);
+
+                return true;
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port;
+
+        const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
+        const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
+
+        await timers.setTimeout(100);
+
+        await server.sse.publish('/events', { data: 'test' }, { event: 'msg' });
+
+        const [r1, r2] = await Promise.all([p1, p2]);
+
+        expect(r1.events.length).toBe(1);
+        expect(r2.events.length).toBe(1);
+
+        expect(credentialsSeen.length).toBe(2);
+    });
+
+    // --- DoS: Graceful handling under connection pressure ---
+
+    it('rapid subscribe/unsubscribe does not leak sessions', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const port = server.info.port;
+
+        const connections = Array.from({ length: 10 }, () =>
+            collectSse(`http://localhost:${port}/events`, { timeout: 100 }),
+        );
+
+        await Promise.all(connections);
+
+        await timers.setTimeout(200);
+
+        expect(server.sse.sessionCount).toBe(0);
+    });
+
+    it('publish after server.stop() does not crash', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        await server.stop({ timeout: 100 });
+
+        const count = await server.sse.publish('/events', { msg: 'after stop' });
+
+        expect(count).toBe(0);
+    });
+
+    it('broadcast after server.stop() does not crash', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        await server.stop({ timeout: 100 });
+
+        const count = await server.sse.broadcast({ msg: 'after stop' });
+
+        expect(count).toBe(0);
+    });
+
+    // --- Data Leakage: Cross-subscription isolation ---
+
+    it('subscription A publish does not leak to subscription B listeners', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/private');
+        server.sse.subscription('/public');
+        await server.start();
+
+        const port = server.info.port;
+
+        const publicPromise = collectSse(`http://localhost:${port}/public`, { timeout: 300 });
+
+        await timers.setTimeout(50);
+
+        await server.sse.publish('/private', { secret: 'classified' }, { event: 'leak' });
+
+        const publicResult = await publicPromise;
+
+        expect(publicResult.events.length).toBe(0);
+    });
+
+    // --- Connection Security: Kill switch ---
+
+    it('closed session does not receive subsequently published events', async ({ onTestFinished }) => {
+        let sessionRef: any;
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            onSubscribe: (session) => {
+                sessionRef = session;
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port;
+
+        const promise = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
+
+        await timers.setTimeout(50);
+
+        sessionRef.close();
+
+        const count = await server.sse.publish('/events', { msg: 'post-kill' }, { event: 'msg' });
+
+        await promise;
+
+        expect(count).toBe(0);
+    });
+
+    // --- maxSessions: Per-subscription connection limiting ---
+
+    it('maxSessions rejects connections exceeding threshold with 503', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', { maxSessions: 2 });
+        await server.start();
+
+        const port = server.info.port;
+
+        const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
+        const p2 = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
+
+        await timers.setTimeout(100);
+
+        expect(server.sse.sessionCount).toBe(2);
+
+        const rejected = await collectSse(`http://localhost:${port}/events`, { timeout: 500 });
+
+        expect(rejected.status).toBe(503);
+
+        await Promise.all([p1, p2]);
+    });
+
+    it('maxSessions allows new connections after existing ones disconnect', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', { maxSessions: 1 });
+        await server.start();
+
+        const port = server.info.port;
+
+        const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 200 });
+
+        await timers.setTimeout(50);
+
+        expect(server.sse.sessionCount).toBe(1);
+
+        await p1;
+        await timers.setTimeout(100);
+
+        const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
+
+        await timers.setTimeout(50);
+
+        await server.sse.publish('/events', { ok: true });
+
+        const result = await p2;
+
+        expect(result.status).toBe(200);
+        expect(result.events.length).toBe(1);
+    });
+
+    it('maxSessions is per-subscription, not global', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/a', { maxSessions: 1 });
+        server.sse.subscription('/b', { maxSessions: 1 });
+        await server.start();
+
+        const port = server.info.port;
+
+        const pa = collectSse(`http://localhost:${port}/a`, { timeout: 300 });
+        const pb = collectSse(`http://localhost:${port}/b`, { timeout: 300 });
+
+        await timers.setTimeout(50);
+
+        expect(server.sse.sessionCount).toBe(2);
+
+        await Promise.all([pa, pb]);
+    });
+
+    // --- maxDuration: Connection TTL with forced expiry ---
+
+    it('maxDuration closes session after expiry', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', { maxDuration: 200 });
+        await server.start();
+
+        const port = server.info.port;
+
+        const raw = await new Promise<string>((resolve) => {
+            let data = '';
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                });
+
+                res.on('end', () => resolve(data));
+            });
+
+            req.on('error', () => {});
+
+            setTimeout(() => {
+                req.destroy();
+                resolve(data);
+            }, 1000);
+        });
+
+        expect(raw).toContain(': session expired');
+    });
+
+    it('maxDuration timer is cleared on early close', async ({ onTestFinished }) => {
+        let sessionRef: any;
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events', {
+            maxDuration: 60_000,
+            onSubscribe: (session) => {
+                sessionRef = session;
+            },
+        });
+
+        await server.start();
+
+        const port = server.info.port;
+
+        const promise = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
+
+        await timers.setTimeout(50);
+
+        sessionRef.close();
+
+        await promise;
+
+        expect(() => sessionRef.close()).not.toThrow();
+    });
+
+    // --- Remaining gaps (external layer) ---
+
+    it.todo(
+        'EXTERNAL: Origin header validation — implement via Hapi onPreAuth extension or reverse proxy',
+    );
+
+    it.todo(
+        'EXTERNAL: stream replacement guard — implement via session-aware auth middleware',
+    );
 
     describe.concurrent('Edge Cases', () => {
         it('handles auth configurations in subscription()', async ({ onTestFinished }) => {

@@ -22,6 +22,8 @@ export interface SubscriptionConfig<T = unknown> {
     retry?: number | null;
     keepAlive?: { interval: number } | false;
     replay?: Replayer;
+    maxSessions?: number;
+    maxDuration?: number;
 }
 
 export interface SubscriptionInfo {
@@ -89,13 +91,21 @@ export class SubscriptionRegistry {
         return null;
     }
 
-    addSession(pattern: string, session: Session, params: Record<string, string>, resolvedPath: string): void {
+    addSession(pattern: string, session: Session, params: Record<string, string>, resolvedPath: string): boolean {
         const sub = this.#subscriptions.get(pattern);
 
-        if (sub) {
-            sub.sessions.add(session);
-            this.#sessionInfo.set(session, { pattern, params, resolvedPath });
+        if (!sub) {
+            return false;
         }
+
+        if (sub.config.maxSessions && sub.sessions.size >= sub.config.maxSessions) {
+            return false;
+        }
+
+        sub.sessions.add(session);
+        this.#sessionInfo.set(session, { pattern, params, resolvedPath });
+
+        return true;
     }
 
     removeSession(session: Session): void {
@@ -113,6 +123,10 @@ export class SubscriptionRegistry {
 
     get sessionCount(): number {
         return this.#sessionInfo.size;
+    }
+
+    subscriptionSessionCount(pattern: string): number {
+        return this.#subscriptions.get(pattern)?.sessions.size ?? 0;
     }
 
     listSubscriptions(): SubscriptionInfo[] {
