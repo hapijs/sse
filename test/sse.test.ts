@@ -3322,16 +3322,10 @@ describe.concurrent('SSE Plugin', () => {
     });
 
     it('Last-Event-ID with null character via raw TCP does not crash server', async ({ onTestFinished }) => {
-        let capturedId = '';
-
         const server = Hapi.server({ port: 0 });
         onTestFinished(() => server.stop());
         await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
-        server.sse.subscription('/events', {
-            onReconnect: (session) => {
-                capturedId = session.lastEventId;
-            },
-        });
+        server.sse.subscription('/events');
 
         await server.start();
 
