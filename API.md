@@ -20,12 +20,12 @@ const server = Hapi.server({ port: 3000 });
 
 await server.register({ plugin: SsePlugin });
 
-server.sse.subscription('/events');
+server.sse.subscription('/chat/{room}');
 
 await server.start();
 
 // Publish from anywhere
-await server.sse.publish('/events', { msg: 'hello' }, { event: 'chat' });
+await server.sse.publish('/chat/general', { text: 'hello', user: 'alice' }, { event: 'message' });
 ```
 
 ## Plugin Options
@@ -50,12 +50,12 @@ await server.register({
 Registers a subscription route. Clients connect via `GET <path>`.
 
 ```typescript
-server.sse.subscription('/events/{channel}', {
+server.sse.subscription('/chat/{room}', {
     auth: 'jwt',
     retry: 5000,
     keepAlive: { interval: 10_000 },
     filter: async (path, message, { credentials, params, internal }) => {
-        if (params.channel !== internal.targetChannel) {
+        if (params.room !== internal.targetRoom) {
             return false; // don't deliver
         }
         return { override: { ...message, filtered: true } }; // or transform
@@ -79,6 +79,8 @@ server.sse.subscription('/events/{channel}', {
 | `onUnsubscribe` | `(session, path, params) => void`                                  | Fires on client disconnect                                                                      |
 | `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present (after replay). Errors close the session gracefully.      |
 | `replay`        | `Replayer`                                                         | Replay provider for automatic reconnection replay                                               |
+| `maxSessions`   | `number`                                                           | Maximum concurrent sessions for this subscription. Excess connections receive a 503 response.   |
+| `maxDuration`   | `number`                                                           | Maximum connection lifetime in ms. Sessions are closed after this duration (with ±10% jitter to prevent thundering herd reconnections). A `: session expired` comment is sent before closing. |
 
 ### `server.sse.publish(path, data, opts?)`
 
@@ -86,12 +88,12 @@ Publishes an event to all matching subscribers. Returns the number of sessions t
 
 ```typescript
 const delivered = await server.sse.publish(
-    '/events/news',
-    { headline: '...' },
+    '/chat/general',
+    { text: 'hello everyone', user: 'alice' },
     {
-        event: 'breaking',
-        id: 'evt-42',
-        internal: { targetChannel: 'news' }, // passed to filter
+        event: 'message',
+        id: 'msg-42',
+        internal: { targetRoom: 'general' }, // passed to filter
         matchMode: 'literal', // 'pattern' (default) or 'literal'
     },
 );
@@ -101,8 +103,8 @@ console.log(`Delivered to ${delivered} sessions`);
 
 **`matchMode`:**
 
-- `'pattern'` (default) — delivers to all sessions on a matching subscription pattern (e.g. `/events/{channel}`)
-- `'literal'` — only delivers to sessions whose actual connected path equals `path` exactly. Useful for parameterized subscriptions where you want to target `/events/news` but not `/events/sport`.
+- `'pattern'` (default) — delivers to all sessions on a matching subscription pattern (e.g. `/chat/{room}`)
+- `'literal'` — only delivers to sessions whose actual connected path equals `path` exactly. Useful for parameterized subscriptions where you want to target `/chat/general` but not `/chat/random`.
 
 **Note:** Only events published with an explicit `id` are recorded by the replayer. Events without an `id` are delivered but not stored for replay.
 
@@ -111,7 +113,10 @@ console.log(`Delivered to ${delivered} sessions`);
 Sends an event to every connected session across all subscriptions. Returns the delivery count.
 
 ```typescript
-const count = await server.sse.broadcast({ type: 'maintenance' }, { event: 'system' });
+const count = await server.sse.broadcast(
+    { text: 'Server restarting in 5 minutes', user: 'system' },
+    { event: 'system' },
+);
 ```
 
 ### `server.sse.eachSession(fn, opts?)`
@@ -121,9 +126,9 @@ Iterates over connected sessions. Optionally filter by subscription pattern.
 ```typescript
 await server.sse.eachSession(
     async (session) => {
-        session.push({ ping: true });
+        session.push({ text: 'ping', user: 'system' });
     },
-    { subscription: '/events' },
+    { subscription: '/chat/{room}' },
 );
 ```
 
@@ -133,7 +138,7 @@ Returns a snapshot of all registered subscriptions with active session counts.
 
 ```typescript
 const subs = server.sse.subscriptions();
-// [{ pattern: '/events', activeSessions: 3 }, { pattern: '/chat/{room}', activeSessions: 12 }]
+// [{ pattern: '/chat/{room}', activeSessions: 12 }]
 ```
 
 ### `server.sse.closeSessions(pattern)`
@@ -141,8 +146,7 @@ const subs = server.sse.subscriptions();
 Closes all sessions for a specific subscription pattern.
 
 ```typescript
-server.sse.closeSessions('/events'); // close all /events sessions
-server.sse.closeSessions('/chat/{room}'); // close all chat sessions
+server.sse.closeSessions('/chat/{room}');
 ```
 
 ### `server.sse.sessionCount`
@@ -195,8 +199,8 @@ session.request                   // The original hapi Request object
 **Metadata** — attach arbitrary key-value data to a session:
 
 ```typescript
-session.set('userId', 42);
-session.get('userId'); // 42
+session.set('userId', 'alice');
+session.get('userId'); // 'alice'
 session.has('userId'); // true
 session.delete('userId'); // true
 ```
@@ -205,23 +209,23 @@ Metadata persists for the lifetime of the session. Useful for tagging sessions i
 
 ## Custom Handler Mode
 
-For full control over the stream (e.g. AI token streaming), use the handler decorator instead of subscriptions:
+For full control over the stream (e.g. AI-assisted chat responses), use the handler decorator instead of subscriptions:
 
 ```typescript
 server.route({
     method: 'GET',
-    path: '/stream',
+    path: '/chat/{room}/ai',
     handler: {
         sse: {
             stream: async (request, session) => {
                 for (const token of tokens) {
-                    session.push({ token }, 'token');
+                    session.push({ token, user: 'assistant' }, 'token');
                 }
                 session.close();
             },
             retry: 3000, // override plugin-level retry
             keepAlive: { interval: 10_000 }, // override plugin-level keep-alive
-            headers: { 'X-Stream': 'true' }, // override plugin-level headers
+            headers: { 'X-Chat-Bot': 'true' }, // override plugin-level headers
             backpressure: { maxBytes: 32768, strategy: 'close' },
         },
     },
@@ -237,10 +241,11 @@ server.route({
 | `keepAlive`    | `{ interval: number } \| false`               | Override plugin-level keep-alive (default: inherits from plugin)                  |
 | `headers`      | `Record<string, string>`                      | Override plugin-level headers (default: inherits from plugin)                     |
 | `backpressure` | `BackpressureOptions`                         | Override plugin-level backpressure (default: inherits from plugin)                |
+| `maxDuration`  | `number`                                      | Maximum connection lifetime in ms (with ±10% jitter). Sends a comment before closing. |
 
 ## Event Replay
 
-Automatic replay of missed events on client reconnection. When a client sends `Last-Event-ID`, the replayer pushes missed events before `onReconnect` fires.
+SSE clients automatically send a `Last-Event-ID` header when reconnecting after a dropped connection. When a replayer is configured, the plugin uses that ID to find where the client left off and pushes any events published after it — so the client catches up on what it missed while disconnected.
 
 Only events published with an explicit `id` are recorded. Events without an `id` are delivered but not stored for replay — this prevents the buffer from filling with unaddressable entries.
 
@@ -248,29 +253,29 @@ Two built-in replayers:
 
 ### FiniteReplayer
 
-Fixed-size ring buffer. O(1) append, linear scan for replay.
+Keeps the last N events in a fixed-size ring buffer. When full, the oldest entry is dropped to make room. Memory usage is predictable — bounded by `size`.
 
 ```typescript
 import { FiniteReplayer } from '@hapi/sse';
 
 const replayer = new FiniteReplayer({ size: 100, autoId: true });
 
-server.sse.subscription('/events', { replay: replayer });
+server.sse.subscription('/chat/{room}', { replay: replayer });
 ```
 
 ### ValidReplayer
 
-Time-based expiry with periodic garbage collection.
+Keeps events for a fixed duration. A periodic cleanup timer removes expired entries, so memory usage varies with publish rate but replayed events are never older than `ttl`.
 
 ```typescript
 import { ValidReplayer } from '@hapi/sse';
 
 const replayer = new ValidReplayer({ ttl: 60_000, autoId: true });
 
-server.sse.subscription('/events', { replay: replayer });
+server.sse.subscription('/chat/{room}', { replay: replayer });
 ```
 
-Call `replayer.stop()` to clear the GC timer (handled automatically on server stop).
+Call `replayer.stop()` to clear the cleanup timer (handled automatically on server stop).
 
 **Options:**
 
@@ -314,7 +319,7 @@ await server.register({
 // Handler level — overrides plugin level
 server.route({
     method: 'GET',
-    path: '/stream',
+    path: '/chat/{room}/ai',
     handler: {
         sse: {
             stream: async (req, session) => { ... },
@@ -343,13 +348,13 @@ await server.register({
     options: {
         hooks: {
             onSession: (session, path, params) => {
-                console.log(`New connection: ${path}`);
+                console.log(`Joined: ${path}`);
             },
             onSessionClose: (session, path, params) => {
-                console.log(`Disconnected: ${path}`);
+                console.log(`Left: ${path}`);
             },
             onPublish: (path, data, deliveryCount) => {
-                console.log(`Published to ${path}: ${deliveryCount} recipients`);
+                console.log(`Message in ${path}: ${deliveryCount} recipients`);
             },
         },
     },
@@ -368,15 +373,33 @@ interface ChatMessage {
     user: string;
 }
 
-server.sse.subscription<ChatMessage>('/chat', {
+server.sse.subscription<ChatMessage>('/chat/{room}', {
     filter: (path, message) => {
         // message is typed as ChatMessage
         return message.user !== 'blocked';
     },
 });
 
-await server.sse.publish<ChatMessage>('/chat', { text: 'hi', user: 'alice' });
+await server.sse.publish<ChatMessage>('/chat/general', { text: 'hello', user: 'alice' });
 ```
+
+## Security
+
+The plugin includes several built-in defenses against known SSE attack vectors:
+
+**Retry floor** — The `retry` value is silently clamped to a minimum of 1000ms. This prevents reconnection storm attacks where a malicious or misconfigured `retry: 0` causes clients to reconnect thousands of times per second. Setting `retry: null` disables the retry field entirely (no clamping).
+
+**Last-Event-ID sanitization** — Control characters (`\x00`–`\x1f`) are stripped from the incoming `Last-Event-ID` header. This prevents null byte injection and CRLF attacks via the reconnection header.
+
+**Connection limiting** — Use `maxSessions` on subscriptions to cap concurrent connections. Excess connections receive an HTTP 503 response before SSE headers are sent, preventing connection exhaustion.
+
+**Connection TTL** — Use `maxDuration` to enforce a maximum connection lifetime. A ±10% jitter is applied to prevent thundering herd reconnections when many clients connect at the same time. Clients automatically reconnect via the standard SSE reconnection mechanism.
+
+**CRLF injection protection** — The `EventBuffer` serializer strips or splits newlines in `event` and `id` fields, and splits `data` fields on line terminators. This prevents SSE event injection attacks (CVE-2026-33128, CVE-2026-22735, CVE-2026-29085 pattern).
+
+**Backpressure** — Slow consumers are handled via configurable backpressure strategies (`drop` or `close`), preventing unbounded memory growth from write buffer accumulation.
+
+**Not in scope** — Origin header validation, CSRF protection, and authentication are handled by hapi's auth system and middleware (`onPreAuth` extensions or reverse proxy configuration), not by the SSE plugin.
 
 ## Exports
 

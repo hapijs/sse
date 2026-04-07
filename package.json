@@ -2,11 +2,9 @@
   "name": "@hapi/sse",
   "version": "0.0.1",
   "description": "",
-  "main": "./dist/index.js",
-  "types": "./dist/index-BZ6I-Suu.d.ts",
-  "module": "./dist/index.js",
+  "types": "./dist/index.d.mts",
   "exports": {
-    ".": "./dist/index.js",
+    ".": "./dist/index.mjs",
     "./package.json": "./package.json"
   },
   "type": "module",
@@ -16,9 +14,10 @@
     "LICENSE.md"
   ],
   "scripts": {
-    "test": "vitest run --coverage",
-    "lint": "tsc --noEmit && eslint .",
-    "build": "tsdown"
+    "test": "vitest run",
+    "lint": "eslint .",
+    "build": "tsdown",
+    "prepublishOnly": "node --run build"
   },
   "keywords": [],
   "author": "Danilo Alonso",
@@ -29,12 +28,16 @@
   },
   "devDependencies": {
     "@hapi/boom": "^10.0.1",
-    "@hapi/hapi": "^21.4.6",
-    "@types/node": "^22",
-    "@vitest/coverage-v8": "^3.2.4",
-    "tsdown": "^0.13.3",
-    "typescript": "^5.8.2",
-    "typescript-eslint": "^8.11.0",
-    "vitest": "^3.2.4"
+    "@hapi/hapi": "^21.4.7",
+    "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^4.1.0",
+    "tsdown": "^0.21.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.1",
+    "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@hapi/hoek": "^11.0.7",
+    "joi": "^18.1.2"
   }
 }

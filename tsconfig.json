@@ -1,14 +1,14 @@
 {
     "compilerOptions": {
-        "allowImportingTsExtensions": true,
-        "allowSyntheticDefaultImports": true,
         "declaration": true,
         "declarationMap": true,
         "emitDeclarationOnly": false,
         "erasableSyntaxOnly": true,
+        "verbatimModuleSyntax": true,
         // "exactOptionalPropertyTypes": true,
         "forceConsistentCasingInFileNames": true,
         "inlineSources": true,
+        "isolatedDeclarations": true,
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
         "noEmit": true,
@@ -18,13 +18,14 @@
         // "noUncheckedIndexedAccess": true,
         // "noUnusedLocals": true,
         // "noUnusedParameters": true,
-        "rewriteRelativeImportExtensions": true,
         "skipLibCheck": true,
         "sourceMap": true,
+        "stripInternal": true,
         "strict": true,
         "target": "ESNext"
     },
     "include": [
-        "src"
+        "src",
+        "test"
     ]
 }

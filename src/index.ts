@@ -1,7 +1,7 @@
-export { EventBuffer } from './event-buffer.ts';
-export { Session } from './session.ts';
-export type { BackpressureOptions } from './session.ts';
-export { SsePlugin } from './sse.ts';
+export { EventBuffer } from './event-buffer.js';
+export { Session } from './session.js';
+export type { BackpressureOptions } from './session.js';
+export { SsePlugin } from './sse.js';
 export type {
     SsePluginOptions,
     SseApi,
@@ -11,6 +11,6 @@ export type {
     SubscriptionConfig,
     SubscriptionInfo,
     FilterOptions,
-} from './sse.ts';
-export type { Replayer, ReplayEntry } from './replayer.ts';
-export { FiniteReplayer, ValidReplayer } from './replayer.ts';
+} from './sse.js';
+export type { Replayer, ReplayEntry } from './replayer.js';
+export { FiniteReplayer, ValidReplayer } from './replayer.js';

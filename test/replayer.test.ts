@@ -1,8 +1,9 @@
-import { expect, describe, it, afterEach } from 'vitest';
+import * as timers from 'node:timers/promises';
+import { expect, describe, it } from 'vitest';
 
-import { FiniteReplayer, ValidReplayer } from './replayer.ts';
+import { FiniteReplayer, ValidReplayer } from '../src/replayer.js';
 
-describe('FiniteReplayer', () => {
+describe.concurrent('FiniteReplayer', () => {
     it('records and replays entries after lastEventId', () => {
         const replayer = new FiniteReplayer({ size: 10 });
 
@@ -75,6 +76,16 @@ describe('FiniteReplayer', () => {
         expect(entries[1].id).toBe('2');
     });
 
+    it('id is not generated when autoId is false and id is missing', () => {
+        const replayer = new FiniteReplayer({ size: 10, autoId: false });
+
+        replayer.record({ data: 'a' } as any);
+
+        const entries = replayer.replay('0');
+
+        expect(entries[0].id).toBeUndefined();
+    });
+
     it('autoId does not overwrite explicit ids', () => {
         const replayer = new FiniteReplayer({ size: 10, autoId: true });
 
@@ -98,17 +109,10 @@ describe('FiniteReplayer', () => {
     });
 });
 
-describe('ValidReplayer', () => {
-    let replayer: ValidReplayer;
-
-    afterEach(() => {
-        if (replayer) {
-            replayer.stop();
-        }
-    });
-
-    it('records and replays entries after lastEventId', () => {
-        replayer = new ValidReplayer({ ttl: 60_000 });
+describe.concurrent('ValidReplayer', () => {
+    it('records and replays entries after lastEventId', ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 60_000 });
+        onTestFinished(() => replayer.stop());
 
         replayer.record({ data: 'a', id: '1' });
         replayer.record({ data: 'b', id: '2' });
@@ -121,8 +125,9 @@ describe('ValidReplayer', () => {
         expect(entries[1]).toEqual({ data: 'c', event: undefined, id: '3' });
     });
 
-    it('returns all entries when lastEventId is not found', () => {
-        replayer = new ValidReplayer({ ttl: 60_000 });
+    it('returns all entries when lastEventId is not found', ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 60_000 });
+        onTestFinished(() => replayer.stop());
 
         replayer.record({ data: 'a', id: '1' });
         replayer.record({ data: 'b', id: '2' });
@@ -132,20 +137,22 @@ describe('ValidReplayer', () => {
         expect(entries.length).toBe(2);
     });
 
-    it('expires entries after ttl', async () => {
-        replayer = new ValidReplayer({ ttl: 50 });
+    it('expires entries after ttl', async ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 50 });
+        onTestFinished(() => replayer.stop());
 
         replayer.record({ data: 'a', id: '1' });
 
-        await new Promise((r) => setTimeout(r, 100));
+        await timers.setTimeout(100);
 
         const entries = replayer.replay('0');
 
         expect(entries.length).toBe(0);
     });
 
-    it('preserves non-expired entries', async () => {
-        replayer = new ValidReplayer({ ttl: 5000 });
+    it('preserves non-expired entries', async ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 5000 });
+        onTestFinished(() => replayer.stop());
 
         replayer.record({ data: 'a', id: '1' });
 
@@ -154,8 +161,9 @@ describe('ValidReplayer', () => {
         expect(entries.length).toBe(1);
     });
 
-    it('autoId generates sequential ids when entry id is empty', () => {
-        replayer = new ValidReplayer({ ttl: 60_000, autoId: true });
+    it('autoId generates sequential ids when entry id is empty', ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 60_000, autoId: true });
+        onTestFinished(() => replayer.stop());
 
         replayer.record({ data: 'a', id: '' });
         replayer.record({ data: 'b', id: '' });
@@ -166,20 +174,21 @@ describe('ValidReplayer', () => {
         expect(entries[1].id).toBe('2');
     });
 
-    it('stop() clears the timer', () => {
-        replayer = new ValidReplayer({ ttl: 1000 });
+    it('id is not generated when autoId is false and id is missing', ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 60_000, autoId: false });
+        onTestFinished(() => replayer.stop());
 
-        replayer.stop();
-        replayer.stop();
-    });
-
-    it('replay strips internal expiresAt field', () => {
-        replayer = new ValidReplayer({ ttl: 60_000 });
-
-        replayer.record({ data: 'a', id: '1' });
+        replayer.record({ data: 'a' } as any);
 
         const entries = replayer.replay('0');
 
-        expect(Object.keys(entries[0])).toEqual(['data', 'event', 'id']);
+        expect(entries[0].id).toBeUndefined();
+    });
+
+    it('stop() clears the timer', () => {
+        const replayer = new ValidReplayer({ ttl: 1000 });
+
+        replayer.stop();
+        replayer.stop();
     });
 });

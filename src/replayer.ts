@@ -1,3 +1,5 @@
+import Joi from 'joi';
+
 export interface ReplayEntry {
     data: unknown;
     event?: string;
@@ -10,13 +12,29 @@ export interface Replayer {
     stop?(): void;
 }
 
+const finiteReplayerOptionsSchema = Joi.object({
+    size: Joi.number().integer().positive().required(),
+    autoId: Joi.boolean(),
+}).label('FiniteReplayer options');
+
+const validReplayerOptionsSchema = Joi.object({
+    ttl: Joi.number().integer().positive().required(),
+    autoId: Joi.boolean(),
+}).label('ValidReplayer options');
+
 export class FiniteReplayer implements Replayer {
+    /** @internal */
     readonly #size: number;
+    /** @internal */
     readonly #autoId: boolean;
+    /** @internal */
     readonly #buffer: ReplayEntry[] = [];
+    /** @internal */
     #counter = 0;
 
     constructor(opts: { size: number; autoId?: boolean }) {
+        Joi.attempt(opts, finiteReplayerOptionsSchema, 'Invalid FiniteReplayer options:');
+
         this.#size = opts.size;
         this.#autoId = opts.autoId ?? false;
     }
@@ -51,13 +69,20 @@ interface TimedEntry extends ReplayEntry {
 }
 
 export class ValidReplayer implements Replayer {
+    /** @internal */
     readonly #ttl: number;
+    /** @internal */
     readonly #autoId: boolean;
+    /** @internal */
     readonly #buffer: TimedEntry[] = [];
+    /** @internal */
     #timer: ReturnType<typeof setInterval> | null = null;
+    /** @internal */
     #counter = 0;
 
     constructor(opts: { ttl: number; autoId?: boolean }) {
+        Joi.attempt(opts, validReplayerOptionsSchema, 'Invalid ValidReplayer options:');
+
         this.#ttl = opts.ttl;
         this.#autoId = opts.autoId ?? false;
 
@@ -94,6 +119,7 @@ export class ValidReplayer implements Replayer {
         }
     }
 
+    /** @internal */
     #gc(): void {
         const now = Date.now();
 

@@ -1,7 +1,7 @@
 import type { Request } from '@hapi/hapi';
 import type { ServerResponse } from 'node:http';
 
-import { EventBuffer } from './event-buffer.ts';
+import { EventBuffer } from './event-buffer.js';
 
 export interface BackpressureOptions {
     maxBytes: number;
@@ -14,20 +14,34 @@ export interface SessionOptions {
     keepAlive: { interval: number } | false;
     headers: Record<string, string>;
     backpressure?: BackpressureOptions;
+    maxDuration?: number;
 }
 
 export class Session {
     readonly request: Request;
     readonly lastEventId: string;
     readonly connectedAt: number;
+    /** @internal */
     readonly #res: ServerResponse;
+    /** @internal */
     readonly #buffer: EventBuffer;
+    /** @internal */
     readonly #retry: number | null;
+    /** @internal */
     readonly #keepAlive: { interval: number } | false;
+    /** @internal */
     readonly #headers: Record<string, string>;
+    /** @internal */
     readonly #backpressure: BackpressureOptions | undefined;
+    /** @internal */
+    readonly #maxDuration: number | undefined;
+    /** @internal */
     readonly #metadata = new Map<string, unknown>();
+    /** @internal */
     #keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+    /** @internal */
+    #maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
+    /** @internal */
     #closed = false;
 
     constructor(options: SessionOptions) {
@@ -36,13 +50,14 @@ export class Session {
 
         const rawId = options.request.headers['last-event-id'];
 
-        this.lastEventId = (Array.isArray(rawId) ? rawId[0] : rawId) ?? '';
+        this.lastEventId = ((Array.isArray(rawId) ? rawId[0] : rawId) ?? '').replace(/[\x00-\x1f]/g, '');
         this.#res = options.request.raw.res;
         this.#buffer = new EventBuffer();
         this.#retry = options.retry;
         this.#keepAlive = options.keepAlive;
         this.#headers = options.headers;
         this.#backpressure = options.backpressure;
+        this.#maxDuration = options.maxDuration;
     }
 
     get isOpen(): boolean {
@@ -89,16 +104,28 @@ export class Session {
         this.#flush();
 
         if (this.#keepAlive) {
-            this.#keepAliveTimer = setInterval(() => {
-                if (this.#closed) {
-                    return;
-                }
-
-                this.#buffer.comment();
-                this.#buffer.dispatch();
-                this.#flush();
-            }, this.#keepAlive.interval);
+            this.#keepAliveTimer = setInterval(() => this.#onKeepAlive(), this.#keepAlive.interval);
         }
+
+        if (this.#maxDuration) {
+            const jitter = this.#maxDuration * 0.1 * (2 * Math.random() - 1);
+
+            this.#maxDurationTimer = setTimeout(() => {
+                this.comment('session expired');
+                this.close();
+            }, this.#maxDuration + jitter);
+        }
+    }
+
+    /** @internal */
+    #onKeepAlive(): void {
+        if (this.#closed) {
+            return;
+        }
+
+        this.#buffer.comment();
+        this.#buffer.dispatch();
+        this.#flush();
     }
 
     push(data: unknown, event?: string, id?: string): boolean {
@@ -150,9 +177,15 @@ export class Session {
             this.#keepAliveTimer = null;
         }
 
+        if (this.#maxDurationTimer) {
+            clearTimeout(this.#maxDurationTimer);
+            this.#maxDurationTimer = null;
+        }
+
         this.#res.end();
     }
 
+    /** @internal */
     #flush(): boolean {
         const data = this.#buffer.read();
 
