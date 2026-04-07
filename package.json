@@ -1,7 +1,7 @@
 {
   "name": "@hapi/sse",
   "version": "0.0.1",
-  "description": "",
+  "description": "Server-Sent Events plugin for hapi",
   "types": "./dist/index.d.mts",
   "exports": {
     ".": "./dist/index.mjs",
@@ -19,7 +19,12 @@
     "build": "tsdown",
     "prepublishOnly": "node --run build"
   },
-  "keywords": [],
+  "keywords": [
+    "hapi",
+    "plugin",
+    "sse",
+    "server-sent events"
+  ],
   "author": "Danilo Alonso",
   "license": "BSD-3-Clause",
   "peerDependencies": {
