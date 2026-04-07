@@ -1,6 +1,6 @@
 {
   "name": "@hapi/sse",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Server-Sent Events plugin for hapi",
   "types": "./dist/index.d.mts",
   "exports": {
