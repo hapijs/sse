@@ -1,3 +1,5 @@
+import Joi from 'joi';
+
 export interface ReplayEntry {
     data: unknown;
     event?: string;
@@ -10,6 +12,16 @@ export interface Replayer {
     stop?(): void;
 }
 
+const finiteReplayerOptionsSchema = Joi.object({
+    size: Joi.number().integer().positive().required(),
+    autoId: Joi.boolean(),
+}).label('FiniteReplayer options');
+
+const validReplayerOptionsSchema = Joi.object({
+    ttl: Joi.number().integer().positive().required(),
+    autoId: Joi.boolean(),
+}).label('ValidReplayer options');
+
 export class FiniteReplayer implements Replayer {
     /** @internal */
     readonly #size: number;
@@ -21,6 +33,8 @@ export class FiniteReplayer implements Replayer {
     #counter = 0;
 
     constructor(opts: { size: number; autoId?: boolean }) {
+        Joi.attempt(opts, finiteReplayerOptionsSchema, 'Invalid FiniteReplayer options:');
+
         this.#size = opts.size;
         this.#autoId = opts.autoId ?? false;
     }
@@ -67,6 +81,8 @@ export class ValidReplayer implements Replayer {
     #counter = 0;
 
     constructor(opts: { ttl: number; autoId?: boolean }) {
+        Joi.attempt(opts, validReplayerOptionsSchema, 'Invalid ValidReplayer options:');
+
         this.#ttl = opts.ttl;
         this.#autoId = opts.autoId ?? false;
 

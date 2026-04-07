@@ -1,5 +1,7 @@
-import type { NamedPlugin, Request, ResponseToolkit, RouteOptions, Lifecycle } from '@hapi/hapi';
+import type { NamedPlugin, Request, RequestRoute, ResponseToolkit, RouteOptions, Lifecycle } from '@hapi/hapi';
 import Boom from '@hapi/boom';
+import * as Hoek from '@hapi/hoek';
+import Joi from 'joi';
 import { createRequire } from 'node:module';
 
 import { Session } from './session.js';
@@ -80,10 +82,70 @@ const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure'>> = {
     headers: {},
 };
 
+const keepAliveSchema = Joi.alternatives().try(
+    Joi.object({ interval: Joi.number().integer().positive().required() }),
+    Joi.valid(false),
+);
+
+const retrySchema = Joi.number().integer().min(0).allow(null);
+
+const headersSchema = Joi.object().pattern(Joi.string(), Joi.string());
+
+const backpressureSchema = Joi.object({
+    maxBytes: Joi.number().integer().positive().required(),
+    strategy: Joi.string().valid('close', 'drop').required(),
+});
+
+const hooksSchema = Joi.object({
+    onSession: Joi.function(),
+    onSessionClose: Joi.function(),
+    onPublish: Joi.function(),
+});
+
+const pluginOptionsSchema = Joi.object({
+    keepAlive: keepAliveSchema,
+    retry: retrySchema,
+    headers: headersSchema,
+    hooks: hooksSchema,
+    backpressure: backpressureSchema,
+}).label('SsePluginOptions');
+
+const replayerSchema = Joi.object({
+    record: Joi.function().required(),
+    replay: Joi.function().required(),
+    stop: Joi.function(),
+})
+    .unknown(true)
+    .label('Replayer');
+
+const subscriptionConfigSchema = Joi.object({
+    auth: Joi.any(),
+    filter: Joi.function(),
+    onSubscribe: Joi.function(),
+    onUnsubscribe: Joi.function(),
+    onReconnect: Joi.function(),
+    retry: retrySchema,
+    keepAlive: keepAliveSchema,
+    replay: replayerSchema,
+    maxSessions: Joi.number().integer().positive(),
+    maxDuration: Joi.number().integer().positive(),
+}).label('SubscriptionConfig');
+
+const handlerOptionsSchema = Joi.object({
+    stream: Joi.function().required(),
+    retry: retrySchema,
+    keepAlive: keepAliveSchema,
+    headers: headersSchema,
+    backpressure: backpressureSchema,
+    maxDuration: Joi.number().integer().positive(),
+}).label('SseHandlerOptions');
+
 export const SsePlugin: NamedPlugin<SsePluginOptions> = {
     name: '@hapi/sse',
     version,
     register: (server, options) => {
+        Joi.attempt(options, pluginOptionsSchema, 'Invalid @hapi/sse plugin options:');
+
         const config = { ...defaults, ...options };
         const registry = new SubscriptionRegistry();
         const hooks = options.hooks;
@@ -96,6 +158,21 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
         const api: SseApi = {
             subscription: (path, subConfig = {}) => {
+                Hoek.assert(
+                    typeof path === 'string' && path.length > 0,
+                    'sse.subscription(path): path must be a non-empty string',
+                );
+                Hoek.assert(
+                    path.startsWith('/'),
+                    `sse.subscription(path): path must start with "/" (got ${JSON.stringify(path)})`,
+                );
+
+                Joi.attempt(
+                    subConfig,
+                    subscriptionConfigSchema,
+                    `Invalid @hapi/sse subscription config for "${path}":`,
+                );
+
                 registry.register(path, subConfig as SubscriptionConfig);
 
                 const routeConfig: RouteOptions = {};
@@ -111,7 +188,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                     handler: async (request: Request, h: ResponseToolkit) => {
                         const matched = registry.matchPath(request.path)!;
 
-                        const maxSessions = (subConfig as SubscriptionConfig).maxSessions;
+                        const maxSessions = subConfig.maxSessions;
 
                         if (maxSessions && registry.subscriptionSessionCount(matched.pattern) >= maxSessions) {
                             return Boom.serverUnavailable('Too many connections');
@@ -123,7 +200,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                             keepAlive: subConfig.keepAlive ?? config.keepAlive,
                             headers: config.headers,
                             backpressure: options.backpressure,
-                            maxDuration: (subConfig as SubscriptionConfig).maxDuration,
+                            maxDuration: subConfig.maxDuration,
                         });
 
                         if (subConfig.onSubscribe) {
@@ -142,7 +219,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                             }
                         }
 
-                        const replayer = (subConfig as SubscriptionConfig).replay;
+                        const replayer = subConfig.replay;
 
                         if (session.lastEventId && replayer) {
                             const entries = replayer.replay(session.lastEventId);
@@ -230,7 +307,13 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
         server.decorate('server', 'sse', api);
 
-        server.decorate('handler', 'sse', (_route: unknown, handlerOptions: SseHandlerOptions) => {
+        server.decorate('handler', 'sse', (route: RequestRoute, handlerOptions: SseHandlerOptions) => {
+            Joi.attempt(
+                handlerOptions,
+                handlerOptionsSchema,
+                `Invalid @hapi/sse handler options for ${route.method.toUpperCase()} ${route.path}:`,
+            );
+
             return async (request: Request, h: ResponseToolkit): Promise<Lifecycle.ReturnValue> => {
                 const session = new Session({
                     request,

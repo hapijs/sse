@@ -3946,4 +3946,221 @@ describe.concurrent('SSE Plugin', () => {
             await timers.setTimeout(100);
         });
     });
+
+    // --- Runtime validation: catches developer mistakes early ---
+
+    describe.concurrent('Runtime validation', () => {
+        it('rejects non-positive keepAlive interval at register()', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: { keepAlive: { interval: 0 } },
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*keepAlive/i);
+        });
+
+        it('rejects negative retry at register()', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: { retry: -100 },
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*retry/i);
+        });
+
+        it('rejects unknown plugin option keys', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: { keepAlve: false } as never,
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*keepAlve/i);
+        });
+
+        it('rejects non-function hook in plugin options', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: { hooks: { onSession: 'not-a-function' as never } },
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*onSession/i);
+        });
+
+        it('rejects backpressure with invalid strategy', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: {
+                        backpressure: { maxBytes: 1000, strategy: 'kaboom' as never },
+                    },
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*strategy/i);
+        });
+
+        it('rejects backpressure with non-integer maxBytes', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+
+            await expect(
+                server.register({
+                    plugin: SsePlugin,
+                    options: {
+                        backpressure: { maxBytes: 1.5, strategy: 'drop' },
+                    },
+                }),
+            ).rejects.toThrow(/Invalid @hapi\/sse plugin options.*maxBytes/i);
+        });
+
+        it('rejects subscription path that is not a string', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() => server.sse.subscription(123 as never)).toThrow(/sse\.subscription\(path\)/);
+        });
+
+        it('rejects subscription path missing leading slash', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() => server.sse.subscription('events')).toThrow(/must start with "\/"/);
+        });
+
+        it('rejects empty subscription path', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() => server.sse.subscription('')).toThrow(/non-empty string/);
+        });
+
+        it('rejects subscription with non-function filter', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.sse.subscription('/events', { filter: 'nope' as never }),
+            ).toThrow(/Invalid @hapi\/sse subscription config for "\/events".*filter/i);
+        });
+
+        it('rejects subscription with non-positive maxSessions', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.sse.subscription('/events', { maxSessions: 0 }),
+            ).toThrow(/maxSessions/);
+        });
+
+        it('rejects subscription with non-positive maxDuration', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.sse.subscription('/events', { maxDuration: -1 }),
+            ).toThrow(/maxDuration/);
+        });
+
+        it('rejects subscription with replayer missing record/replay', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.sse.subscription('/events', { replay: { record: () => {} } as never }),
+            ).toThrow(/replay/i);
+        });
+
+        it('rejects unknown subscription config key', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.sse.subscription('/events', { onUnsubcsribe: () => {} } as never),
+            ).toThrow(/onUnsubcsribe/);
+        });
+
+        it('rejects sse handler decoration missing stream', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.route({
+                    method: 'GET',
+                    path: '/stream',
+                    handler: { sse: {} as never },
+                }),
+            ).toThrow(/Invalid @hapi\/sse handler options for GET \/stream.*stream/i);
+        });
+
+        it('rejects sse handler decoration with non-function stream', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.route({
+                    method: 'GET',
+                    path: '/stream',
+                    handler: { sse: { stream: 'nope' as never } },
+                }),
+            ).toThrow(/stream/);
+        });
+
+        it('rejects sse handler decoration with bad backpressure', async ({ onTestFinished }) => {
+            const server = Hapi.server();
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+
+            expect(() =>
+                server.route({
+                    method: 'GET',
+                    path: '/stream',
+                    handler: {
+                        sse: {
+                            stream: () => {},
+                            backpressure: { maxBytes: -1, strategy: 'drop' },
+                        },
+                    },
+                }),
+            ).toThrow(/maxBytes/);
+        });
+
+        it('FiniteReplayer rejects non-positive size', () => {
+            expect(() => new FiniteReplayer({ size: 0 })).toThrow(/Invalid FiniteReplayer options.*size/i);
+        });
+
+        it('FiniteReplayer rejects missing size', () => {
+            expect(() => new FiniteReplayer({} as never)).toThrow(/Invalid FiniteReplayer options.*size/i);
+        });
+
+        it('ValidReplayer rejects non-positive ttl', () => {
+            expect(() => new ValidReplayer({ ttl: 0 })).toThrow(/Invalid ValidReplayer options.*ttl/i);
+        });
+
+        it('ValidReplayer rejects non-integer ttl', () => {
+            expect(() => new ValidReplayer({ ttl: 50.5 })).toThrow(/Invalid ValidReplayer options.*ttl/i);
+        });
+    });
 });
