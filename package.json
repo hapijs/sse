@@ -16,7 +16,8 @@
   "scripts": {
     "test": "vitest run",
     "lint": "eslint .",
-    "build": "tsdown"
+    "build": "tsdown",
+    "prepublishOnly": "node --run build"
   },
   "keywords": [],
   "author": "Danilo Alonso",
