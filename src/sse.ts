@@ -4,7 +4,7 @@ import * as Hoek from '@hapi/hoek';
 import Joi from 'joi';
 import { createRequire } from 'node:module';
 
-import { Session } from './session.js';
+import { Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
 import { SubscriptionRegistry } from './subscription.js';
 
@@ -230,8 +230,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                             return h.abandon;
                         }
 
-                        const lastEventId = request.headers['last-event-id'];
-                        const incomingId = Array.isArray(lastEventId) ? lastEventId[0] : lastEventId;
+                        const incomingId = readLastEventId(request);
 
                         if (incomingId && (await completionStore.get(incomingId))) {
                             await completionStore.drop(incomingId);

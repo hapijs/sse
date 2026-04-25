@@ -221,6 +221,45 @@ describe.concurrent('SSE Plugin', () => {
         expect(blocked.status).toBe(204);
     });
 
+    it('onSubscribe calling session.close() abandons the request without setup', async ({ onTestFinished }) => {
+        let onSessionFired = false;
+        let onUnsubscribeFired = false;
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({
+            plugin: SsePlugin,
+            options: {
+                retry: null,
+                keepAlive: false,
+                hooks: {
+                    onSession: () => {
+                        onSessionFired = true;
+                    },
+                },
+            },
+        });
+
+        server.sse.subscription('/events', {
+            onSubscribe: (session) => {
+                session.close();
+            },
+            onUnsubscribe: () => {
+                onUnsubscribeFired = true;
+            },
+        });
+
+        await server.start();
+
+        const result = await collectSse(`http://localhost:${server.info.port}/events`, { timeout: 500 });
+
+        expect(result.events.length).toBe(0);
+        expect(server.sse.sessionCount).toBe(0);
+        expect(server.sse.stats().totalConnections).toBe(0);
+        expect(onSessionFired).toBe(false);
+        expect(onUnsubscribeFired).toBe(false);
+    });
+
     it('completion cache can be overridden with a named server cache', async ({ onTestFinished }) => {
         const CatboxMemory = (await import('@hapi/catbox-memory')).Engine;
 

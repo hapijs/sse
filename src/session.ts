@@ -18,6 +18,12 @@ export interface SessionOptions {
     maxDuration?: number;
 }
 
+export const readLastEventId = (request: Request): string => {
+    const raw = request.headers['last-event-id'];
+
+    return ((Array.isArray(raw) ? raw[0] : raw) ?? '').replace(/[\x00-\x1f]/g, '');
+};
+
 export class Session {
     readonly id: string = randomUUID();
     readonly request: Request;
@@ -51,10 +57,7 @@ export class Session {
     constructor(options: SessionOptions) {
         this.request = options.request;
         this.connectedAt = Date.now();
-
-        const rawId = options.request.headers['last-event-id'];
-
-        this.lastEventId = ((Array.isArray(rawId) ? rawId[0] : rawId) ?? '').replace(/[\x00-\x1f]/g, '');
+        this.lastEventId = readLastEventId(options.request);
         this.#res = options.request.raw.res;
         this.#buffer = new EventBuffer();
         this.#retry = options.retry;
@@ -129,10 +132,6 @@ export class Session {
 
     /** @internal */
     #onKeepAlive(): void {
-        if (this.#closed) {
-            return;
-        }
-
         this.#buffer.comment();
         this.#buffer.dispatch();
         this.#flush();
