@@ -87,6 +87,101 @@ describe.concurrent('Session', () => {
         expect(session.isOpen).toBe(false);
     });
 
+    it('complete() sends a final event, writes the session id to the realm completion store, and closes', async () => {
+        const writes: string[] = [];
+        const mockRes = {
+            writeHead: () => {},
+            write: (chunk: string) => {
+                writes.push(chunk);
+
+                return true;
+            },
+            end: () => {},
+        } as any;
+
+        const stored: string[] = [];
+        const completionStore = {
+            set: async (id: string) => {
+                stored.push(id);
+            },
+        };
+
+        const session = new Session({
+            request: {
+                headers: {},
+                raw: { req: { socket: {} }, res: mockRes },
+                route: { realm: { plugins: { '@hapi/sse': { completionStore } } } },
+            } as any,
+            retry: null,
+            keepAlive: false,
+            headers: {},
+        });
+
+        expect(session.id).toMatch(/^[0-9a-f-]{36}$/);
+
+        session.initialize();
+        await session.complete();
+
+        const final = writes.at(-1)!;
+
+        expect(final).toContain('event: complete');
+        expect(final).toContain(`id: ${session.id}`);
+        expect(final).toContain('data: {"complete":true}');
+        expect(stored).toEqual([session.id]);
+        expect(session.isOpen).toBe(false);
+    });
+
+    it('complete() is a no-op when the session was never initialized', async () => {
+        const stored: string[] = [];
+        const completionStore = {
+            set: async (id: string) => {
+                stored.push(id);
+            },
+        };
+
+        const session = new Session({
+            request: {
+                headers: {},
+                raw: { req: { socket: {} }, res: { writeHead: () => {}, write: () => true, end: () => {} } as any },
+                route: { realm: { plugins: { '@hapi/sse': { completionStore } } } },
+            } as any,
+            retry: null,
+            keepAlive: false,
+            headers: {},
+        });
+
+        await session.complete();
+
+        expect(stored).toEqual([]);
+        expect(session.isOpen).toBe(true);
+    });
+
+    it('complete() is a no-op when the session is already closed', async () => {
+        const stored: string[] = [];
+        const completionStore = {
+            set: async (id: string) => {
+                stored.push(id);
+            },
+        };
+
+        const session = new Session({
+            request: {
+                headers: {},
+                raw: { req: { socket: {} }, res: { writeHead: () => {}, write: () => true, end: () => {} } as any },
+                route: { realm: { plugins: { '@hapi/sse': { completionStore } } } },
+            } as any,
+            retry: null,
+            keepAlive: false,
+            headers: {},
+        });
+
+        session.initialize();
+        session.close();
+        await session.complete();
+
+        expect(stored).toEqual([]);
+    });
+
     it('uses the first event ID when the header is an array of IDs', async () => {
         const mockRequest = {
             headers: { 'last-event-id': ['id1', 'id2'] },

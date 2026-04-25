@@ -1,5 +1,6 @@
 import type { Request } from '@hapi/hapi';
 import type { ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 import { EventBuffer } from './event-buffer.js';
 
@@ -18,6 +19,7 @@ export interface SessionOptions {
 }
 
 export class Session {
+    readonly id: string = randomUUID();
     readonly request: Request;
     readonly lastEventId: string;
     readonly connectedAt: number;
@@ -43,6 +45,8 @@ export class Session {
     #maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
     /** @internal */
     #closed = false;
+    /** @internal */
+    #initialized = false;
 
     constructor(options: SessionOptions) {
         this.request = options.request;
@@ -81,6 +85,12 @@ export class Session {
     }
 
     initialize(): void {
+        if (this.#closed || this.#initialized) {
+            return;
+        }
+
+        this.#initialized = true;
+
         this.#res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -163,6 +173,23 @@ export class Session {
         this.#buffer.comment(text);
         this.#buffer.dispatch();
         this.#flush();
+    }
+
+    async complete(): Promise<void> {
+        if (this.#closed || !this.#initialized) {
+            return;
+        }
+
+        this.#buffer.push({ complete: true }, 'complete', this.id);
+        this.#flush();
+
+        const store = this.request.route.realm.plugins['@hapi/sse']?.completionStore;
+
+        if (store) {
+            await store.set(this.id, true, 0);
+        }
+
+        this.close();
     }
 
     close(): void {
