@@ -2,6 +2,7 @@ import * as timers from 'node:timers/promises';
 import { expect, describe, it } from 'vitest';
 import http from 'node:http';
 import net from 'node:net';
+import { EventSource } from 'eventsource';
 
 import Hapi from '@hapi/hapi';
 import Boom from '@hapi/boom';
@@ -148,6 +149,302 @@ describe.concurrent('SSE Plugin', () => {
 
         expect(result.status).toBe(403);
         expect(result.headers['content-type']).toContain('application/json');
+    });
+
+    it('refuse calculator returning true responds 204 before any session is created', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin });
+
+        let onSubscribeCalled = false;
+
+        server.sse.subscription('/events', {
+            refuse: () => true,
+            onSubscribe: () => {
+                onSubscribeCalled = true;
+            },
+        });
+
+        await server.start();
+
+        const result = await collectSse(`http://localhost:${server.info.port}/events`, { timeout: 500 });
+
+        expect(result.status).toBe(204);
+        expect(result.events.length).toBe(0);
+        expect(result.headers['content-type']).toBeUndefined();
+        expect(onSubscribeCalled).toBe(false);
+        expect(server.sse.sessionCount).toBe(0);
+        expect(server.sse.stats().totalConnections).toBe(0);
+    });
+
+    it('refuse calculator returning false allows the connection to proceed', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+
+        server.sse.subscription('/events', {
+            refuse: () => false,
+        });
+
+        await server.start();
+        const port = server.info.port;
+
+        const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
+        await timers.setTimeout(50);
+        await server.sse.publish('/events', { ok: true }, { event: 'msg' });
+        const { status, events } = await promise;
+
+        expect(status).toBe(200);
+        expect(events.length).toBe(1);
+    });
+
+    it('refuse calculator receives the request and can be async', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin });
+
+        server.sse.subscription('/events', {
+            refuse: async (request) => {
+                await timers.setTimeout(10);
+
+                return request.headers['x-shutdown'] === 'true';
+            },
+        });
+
+        await server.start();
+        const port = server.info.port;
+
+        const blocked = await collectSse(`http://localhost:${port}/events`, {
+            timeout: 500,
+            headers: { 'x-shutdown': 'true' },
+        });
+        expect(blocked.status).toBe(204);
+    });
+
+    it('onSubscribe calling session.close() abandons the request without setup', async ({ onTestFinished }) => {
+        let onSessionFired = false;
+        let onUnsubscribeFired = false;
+
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({
+            plugin: SsePlugin,
+            options: {
+                retry: null,
+                keepAlive: false,
+                hooks: {
+                    onSession: () => {
+                        onSessionFired = true;
+                    },
+                },
+            },
+        });
+
+        server.sse.subscription('/events', {
+            onSubscribe: (session) => {
+                session.close();
+            },
+            onUnsubscribe: () => {
+                onUnsubscribeFired = true;
+            },
+        });
+
+        await server.start();
+
+        const result = await collectSse(`http://localhost:${server.info.port}/events`, { timeout: 500 });
+
+        expect(result.events.length).toBe(0);
+        expect(server.sse.sessionCount).toBe(0);
+        expect(server.sse.stats().totalConnections).toBe(0);
+        expect(onSessionFired).toBe(false);
+        expect(onUnsubscribeFired).toBe(false);
+    });
+
+    it('completion cache can be overridden with a named server cache', async ({ onTestFinished }) => {
+        const CatboxMemory = (await import('@hapi/catbox-memory')).Engine;
+
+        const server = Hapi.server({
+            port: 0,
+            cache: [
+                {
+                    name: 'my-named-cache',
+                    provider: { constructor: CatboxMemory, options: { maxByteSize: 1024 * 1024 } },
+                },
+            ],
+        });
+        onTestFinished(() => server.stop());
+
+        await server.register({
+            plugin: SsePlugin,
+            options: {
+                retry: null,
+                keepAlive: false,
+                completion: {
+                    cache: 'my-named-cache',
+                    segment: 'custom-segment',
+                    expiresIn: 60_000,
+                },
+            },
+        });
+
+        server.sse.subscription('/events');
+
+        await server.start();
+        const port = server.info.port;
+
+        // Verify completion still works end-to-end via the named cache
+        const tokenPromise = new Promise<string>((resolve) => {
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                let data = '';
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    req.destroy();
+                    const idMatch = data.match(/^id:\s*(.+)$/m);
+
+                    resolve(idMatch ? idMatch[1].trim() : '');
+                });
+            });
+        });
+
+        await timers.setTimeout(50);
+        await server.sse.eachSession((session) => session.complete());
+
+        const token = await tokenPromise;
+        expect(token).toMatch(/[0-9a-f-]{36}/);
+
+        const reconnect = await collectSse(`http://localhost:${port}/events`, {
+            timeout: 500,
+            headers: { 'Last-Event-ID': token },
+        });
+        expect(reconnect.status).toBe(204);
+    });
+
+    it('session.complete() sends a 204 to the next reconnect via Last-Event-ID', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+
+        server.sse.subscription('/events');
+
+        await server.start();
+        const port = server.info.port;
+
+        const captured: string[] = [];
+
+        const firstConnect = new Promise<string>((resolve) => {
+            const req = http.get(`http://localhost:${port}/events`, (res) => {
+                let data = '';
+                res.setEncoding('utf8');
+                res.on('data', (chunk: string) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    captured.push(data);
+                    req.destroy();
+
+                    const idMatch = data.match(/^id:\s*(.+)$/m);
+
+                    resolve(idMatch ? idMatch[1].trim() : '');
+                });
+            });
+        });
+
+        await timers.setTimeout(50);
+        await server.sse.eachSession((session) => session.complete());
+
+        const completionToken = await firstConnect;
+        expect(completionToken).toMatch(/[0-9a-f-]{36}/);
+
+        const reconnect = await collectSse(`http://localhost:${port}/events`, {
+            timeout: 500,
+            headers: { 'Last-Event-ID': completionToken },
+        });
+
+        expect(reconnect.status).toBe(204);
+
+        // Token is consumed — a second reconnect with the same token streams normally
+        const secondReconnectPromise = collectSse(`http://localhost:${port}/events`, {
+            maxEvents: 1,
+            timeout: 500,
+            headers: { 'Last-Event-ID': completionToken },
+        });
+        await timers.setTimeout(50);
+        await server.sse.publish('/events', { ok: true }, { event: 'msg' });
+        const secondReconnect = await secondReconnectPromise;
+        expect(secondReconnect.status).toBe(200);
+    });
+
+    it('real EventSource client reconnects after server closes the stream', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 100, keepAlive: false } });
+
+        let onSubscribeCount = 0;
+
+        server.sse.subscription('/events', {
+            onSubscribe: () => {
+                onSubscribeCount++;
+            },
+        });
+
+        await server.start();
+
+        const es = new EventSource(`http://localhost:${server.info.port}/events`);
+        onTestFinished(() => es.close());
+
+        await new Promise<void>((resolve) => es.addEventListener('open', () => resolve(), { once: true }));
+        expect(onSubscribeCount).toBe(1);
+
+        await server.sse.eachSession((session) => session.close());
+
+        await new Promise<void>((resolve) => es.addEventListener('open', () => resolve(), { once: true }));
+
+        expect(onSubscribeCount).toBe(2);
+        expect(es.readyState).toBe(EventSource.OPEN);
+    });
+
+    it('real EventSource client stops reconnecting after session.complete() runs', async ({ onTestFinished }) => {
+        const server = Hapi.server({ port: 0 });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: 100, keepAlive: false } });
+
+        let onSubscribeCount = 0;
+
+        server.sse.subscription('/events', {
+            onSubscribe: () => {
+                onSubscribeCount++;
+            },
+        });
+
+        await server.start();
+
+        const es = new EventSource(`http://localhost:${server.info.port}/events`);
+        onTestFinished(() => es.close());
+
+        await new Promise<void>((resolve) => es.addEventListener('open', () => resolve(), { once: true }));
+
+        await server.sse.eachSession((session) => session.complete());
+
+        await new Promise<void>((resolve) => {
+            const check = () => {
+                if (es.readyState === EventSource.CLOSED) {
+                    resolve();
+                } else {
+                    setTimeout(check, 25);
+                }
+            };
+
+            check();
+        });
+
+        const closedAt = onSubscribeCount;
+        await timers.setTimeout(300);
+        // Reconnect was 204'd at the completion check, before reaching onSubscribe
+        expect(onSubscribeCount).toBe(closedAt);
+        expect(es.readyState).toBe(EventSource.CLOSED);
     });
 
     it('publish delivers to subscribers', async ({ onTestFinished }) => {

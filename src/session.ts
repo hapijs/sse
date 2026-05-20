@@ -1,5 +1,6 @@
 import type { Request } from '@hapi/hapi';
 import type { ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 import { EventBuffer } from './event-buffer.js';
 
@@ -17,7 +18,14 @@ export interface SessionOptions {
     maxDuration?: number;
 }
 
+export const readLastEventId = (request: Request): string => {
+    const raw = request.headers['last-event-id'];
+
+    return ((Array.isArray(raw) ? raw[0] : raw) ?? '').replace(/[\x00-\x1f]/g, '');
+};
+
 export class Session {
+    readonly id: string = randomUUID();
     readonly request: Request;
     readonly lastEventId: string;
     readonly connectedAt: number;
@@ -43,14 +51,13 @@ export class Session {
     #maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
     /** @internal */
     #closed = false;
+    /** @internal */
+    #initialized = false;
 
     constructor(options: SessionOptions) {
         this.request = options.request;
         this.connectedAt = Date.now();
-
-        const rawId = options.request.headers['last-event-id'];
-
-        this.lastEventId = ((Array.isArray(rawId) ? rawId[0] : rawId) ?? '').replace(/[\x00-\x1f]/g, '');
+        this.lastEventId = readLastEventId(options.request);
         this.#res = options.request.raw.res;
         this.#buffer = new EventBuffer();
         this.#retry = options.retry;
@@ -81,6 +88,12 @@ export class Session {
     }
 
     initialize(): void {
+        if (this.#closed || this.#initialized) {
+            return;
+        }
+
+        this.#initialized = true;
+
         this.#res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -119,10 +132,6 @@ export class Session {
 
     /** @internal */
     #onKeepAlive(): void {
-        if (this.#closed) {
-            return;
-        }
-
         this.#buffer.comment();
         this.#buffer.dispatch();
         this.#flush();
@@ -163,6 +172,23 @@ export class Session {
         this.#buffer.comment(text);
         this.#buffer.dispatch();
         this.#flush();
+    }
+
+    async complete(): Promise<void> {
+        if (this.#closed || !this.#initialized) {
+            return;
+        }
+
+        this.#buffer.push({ complete: true }, 'complete', this.id);
+        this.#flush();
+
+        const store = this.request.route.realm.plugins['@hapi/sse']?.completionStore;
+
+        if (store) {
+            await store.set(this.id, true, 0);
+        }
+
+        this.close();
     }
 
     close(): void {

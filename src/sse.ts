@@ -4,7 +4,7 @@ import * as Hoek from '@hapi/hoek';
 import Joi from 'joi';
 import { createRequire } from 'node:module';
 
-import { Session } from './session.js';
+import { Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
 import { SubscriptionRegistry } from './subscription.js';
 
@@ -19,12 +19,23 @@ export interface SseHooks {
     onPublish?: (path: string, data: unknown, deliveryCount: number) => void;
 }
 
+export interface CompletionCacheOptions {
+    cache?: string;
+    segment?: string;
+    expiresIn?: number;
+}
+
+export interface CompletionStore {
+    set(id: string, value: boolean, ttl: number): Promise<void>;
+}
+
 export interface SsePluginOptions {
     keepAlive?: { interval: number } | false;
     retry?: number | null;
     headers?: Record<string, string>;
     hooks?: SseHooks;
     backpressure?: BackpressureOptions;
+    completion?: CompletionCacheOptions;
 }
 
 export interface SseHandlerOptions {
@@ -68,6 +79,12 @@ declare module '@hapi/hapi' {
     interface HandlerDecorations {
         sse?: SseHandlerOptions;
     }
+
+    interface PluginsStates {
+        '@hapi/sse'?: {
+            completionStore: CompletionStore;
+        };
+    }
 }
 
 const RETRY_FLOOR = 1000;
@@ -76,7 +93,12 @@ const clampRetry = (value: number | null): number | null => {
     return value === null ? null : Math.max(value, RETRY_FLOOR);
 };
 
-const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure'>> = {
+const COMPLETION_DEFAULTS: CompletionCacheOptions = {
+    segment: 'completed-sse-sessions',
+    expiresIn: 5 * 60 * 1000,
+};
+
+const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure' | 'completion'>> = {
     keepAlive: { interval: 15_000 },
     retry: 2000,
     headers: {},
@@ -102,12 +124,19 @@ const hooksSchema = Joi.object({
     onPublish: Joi.function(),
 });
 
+const completionSchema = Joi.object({
+    cache: Joi.string(),
+    segment: Joi.string(),
+    expiresIn: Joi.number().integer().positive(),
+});
+
 const pluginOptionsSchema = Joi.object({
     keepAlive: keepAliveSchema,
     retry: retrySchema,
     headers: headersSchema,
     hooks: hooksSchema,
     backpressure: backpressureSchema,
+    completion: completionSchema,
 }).label('SsePluginOptions');
 
 const replayerSchema = Joi.object({
@@ -121,6 +150,7 @@ const replayerSchema = Joi.object({
 const subscriptionConfigSchema = Joi.object({
     auth: Joi.any(),
     filter: Joi.function(),
+    refuse: Joi.function(),
     onSubscribe: Joi.function(),
     onUnsubscribe: Joi.function(),
     onReconnect: Joi.function(),
@@ -149,6 +179,11 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
         const config = { ...defaults, ...options };
         const registry = new SubscriptionRegistry();
         const hooks = options.hooks;
+
+        const completion = { ...COMPLETION_DEFAULTS, ...options.completion };
+        const completionStore = server.cache<boolean>(completion);
+
+        server.realm.plugins['@hapi/sse'] = { completionStore };
 
         let totalConnections = 0;
         let totalDisconnections = 0;
@@ -188,6 +223,23 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                     handler: async (request: Request, h: ResponseToolkit) => {
                         const matched = registry.matchPath(request.path)!;
 
+                        if (subConfig.refuse && (await subConfig.refuse(request))) {
+                            request.raw.res.writeHead(204);
+                            request.raw.res.end();
+
+                            return h.abandon;
+                        }
+
+                        const incomingId = readLastEventId(request);
+
+                        if (incomingId && (await completionStore.get(incomingId))) {
+                            await completionStore.drop(incomingId);
+                            request.raw.res.writeHead(204);
+                            request.raw.res.end();
+
+                            return h.abandon;
+                        }
+
                         const maxSessions = subConfig.maxSessions;
 
                         if (maxSessions && registry.subscriptionSessionCount(matched.pattern) >= maxSessions) {
@@ -205,6 +257,10 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
                         if (subConfig.onSubscribe) {
                             await subConfig.onSubscribe(session, request.path, matched.params);
+                        }
+
+                        if (!session.isOpen) {
+                            return h.abandon;
                         }
 
                         session.initialize();

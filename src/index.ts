@@ -11,6 +11,8 @@ export type {
     SubscriptionConfig,
     SubscriptionInfo,
     FilterOptions,
+    CompletionCacheOptions,
+    CompletionStore,
 } from './sse.js';
 export type { Replayer, ReplayEntry } from './replayer.js';
 export { FiniteReplayer, ValidReplayer } from './replayer.js';

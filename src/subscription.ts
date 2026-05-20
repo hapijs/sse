@@ -1,4 +1,4 @@
-import type { RouteOptions } from '@hapi/hapi';
+import type { Request, RouteOptions } from '@hapi/hapi';
 
 import { Session } from './session.js';
 import type { Replayer } from './replayer.js';
@@ -16,6 +16,7 @@ export interface SubscriptionConfig<T = unknown> {
         message: T,
         options: FilterOptions,
     ) => boolean | { override: unknown } | Promise<boolean | { override: unknown }>;
+    refuse?: (request: Request) => boolean | Promise<boolean>;
     onSubscribe?: (session: Session, path: string, params: Record<string, string>) => void | Promise<void>;
     onUnsubscribe?: (session: Session, path: string, params: Record<string, string>) => void;
     onReconnect?: (session: Session, path: string, params: Record<string, string>) => void | Promise<void>;
