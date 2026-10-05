@@ -1,5 +1,7 @@
 import Joi from 'joi';
 
+import { assertEventId } from './event-buffer.js';
+
 export interface ReplayEntry {
     data: unknown;
     event?: string;
@@ -40,6 +42,8 @@ export class FiniteReplayer implements Replayer {
     }
 
     record(entry: ReplayEntry): void {
+        assertEventId(entry.id);
+
         const stored: ReplayEntry = {
             data: entry.data,
             event: entry.event,
@@ -90,6 +94,8 @@ export class ValidReplayer implements Replayer {
     }
 
     record(entry: ReplayEntry): void {
+        assertEventId(entry.id);
+
         const stored: TimedEntry = {
             data: entry.data,
             event: entry.event,

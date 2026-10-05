@@ -4,6 +4,12 @@ import { expect, describe, it } from 'vitest';
 import { FiniteReplayer, ValidReplayer } from '../src/replayer.js';
 
 describe.concurrent('FiniteReplayer', () => {
+    it('record() throws on an id containing a null character', () => {
+        const replayer = new FiniteReplayer({ size: 5 });
+
+        expect(() => replayer.record({ data: 'a', id: 'a\u0000b' })).toThrow(/null characters/);
+    });
+
     it('records and replays entries after lastEventId', () => {
         const replayer = new FiniteReplayer({ size: 10 });
 
@@ -110,6 +116,13 @@ describe.concurrent('FiniteReplayer', () => {
 });
 
 describe.concurrent('ValidReplayer', () => {
+    it('record() throws on an id containing a null character', ({ onTestFinished }) => {
+        const replayer = new ValidReplayer({ ttl: 60_000 });
+        onTestFinished(() => replayer.stop());
+
+        expect(() => replayer.record({ data: 'a', id: 'a\u0000b' })).toThrow(/null characters/);
+    });
+
     it('records and replays entries after lastEventId', ({ onTestFinished }) => {
         const replayer = new ValidReplayer({ ttl: 60_000 });
         onTestFinished(() => replayer.stop());
