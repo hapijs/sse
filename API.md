@@ -48,6 +48,12 @@ await server.register({
 });
 ```
 
+## Response lifecycle
+
+SSE responses go through hapi's normal response lifecycle. Route config applies to them (`cors`, `security`), and `onPreResponse` sees them. The handler returns as soon as the stream is set up, so `onPostResponse` and the `response` event fire when the stream ends. A client disconnect ends the request with hapi's `disconnectStatusCode` (499) and logs `response`/`error`/`aborted`.
+
+SSE responses are never compressed and carry `content-encoding: identity`. zlib holds events until it flushes and keeps a compression context in memory for each open connection.
+
 ## API
 
 ### `server.sse.subscription(path, config?)`
@@ -82,9 +88,9 @@ server.sse.subscription('/chat/{room}', {
 | `keepAlive`     | `{ interval: number } \| false`                                    | Override plugin-level keep-alive                                                                |
 | `refuse`        | `(request) => boolean \| Promise<boolean>`                         | Server-state predicate. Runs before the session is created. Returning `true` responds with `204 No Content`, telling the EventSource not to reconnect. |
 | `filter`        | `(path, message, opts) => boolean \| { override } \| Promise<...>` | Per-session delivery filter                                                                     |
-| `onSubscribe`   | `(session, path, params) => void \| Promise<void>`                 | Fires before SSE headers are sent. Throwing a Boom error returns that HTTP error to the client. |
+| `onSubscribe`   | `(session, path, params) => void \| Promise<void>`                 | Fires before SSE headers are sent. Throwing a Boom error returns that HTTP error to the client. Closing the session responds with `204 No Content`. |
 | `onUnsubscribe` | `(session, path, params) => void`                                  | Fires on client disconnect                                                                      |
-| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present (after replay). Errors close the session gracefully.      |
+| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present, after replay. Runs without delaying the response. Errors close the session gracefully. |
 | `replay`        | `Replayer`                                                         | Replay provider for automatic reconnection replay                                               |
 | `maxSessions`   | `number`                                                           | Maximum concurrent sessions for this subscription. Excess connections receive a 503 response.   |
 | `maxDuration`   | `number`                                                           | Maximum connection lifetime in ms. Sessions are closed after this duration (with ±10% jitter to prevent thundering herd reconnections). A `: session expired` comment is sent before closing. |
@@ -293,7 +299,7 @@ server.route({
 
 | Option         | Type                                          | Description                                                                       |
 | -------------- | --------------------------------------------- | --------------------------------------------------------------------------------- |
-| `stream`       | `(request, session) => void \| Promise<void>` | Required. Called after SSE headers are sent. Errors close the session gracefully. |
+| `stream`       | `(request, session) => void \| Promise<void>` | Required. Called once the session is set up; the response is sent while it runs. Errors close the session gracefully. |
 | `retry`        | `number \| null`                              | Override plugin-level retry (default: inherits from plugin)                       |
 | `keepAlive`    | `{ interval: number } \| false`               | Override plugin-level keep-alive (default: inherits from plugin)                  |
 | `headers`      | `Record<string, string>`                      | Override plugin-level headers (default: inherits from plugin)                     |
@@ -362,7 +368,7 @@ class RedisReplayer implements Replayer {
 
 ## Backpressure
 
-Protects against slow consumers accumulating unbounded memory. Uses Node's `writableLength` to accurately measure bytes queued in the kernel buffer. Configurable at plugin level or per-handler.
+Protects against slow consumers accumulating unbounded memory. Counts the bytes queued in the session's stream and in the Node response buffer, not bytes already handed to the kernel. Configurable at plugin level or per-handler.
 
 ```typescript
 // Plugin level — applies to all subscription sessions

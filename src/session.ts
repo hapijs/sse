@@ -1,6 +1,6 @@
-import type { Request } from '@hapi/hapi';
-import type { ServerResponse } from 'node:http';
+import type { Request, ResponseObject, ResponseToolkit } from '@hapi/hapi';
 import { randomUUID } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 
 import { EventBuffer } from './event-buffer.js';
 
@@ -30,7 +30,7 @@ export class Session {
     readonly lastEventId: string;
     readonly connectedAt: number;
     /** @internal */
-    readonly #res: ServerResponse;
+    readonly #stream = new PassThrough();
     /** @internal */
     readonly #buffer: EventBuffer;
     /** @internal */
@@ -58,13 +58,13 @@ export class Session {
         this.request = options.request;
         this.connectedAt = Date.now();
         this.lastEventId = readLastEventId(options.request);
-        this.#res = options.request.raw.res;
         this.#buffer = new EventBuffer();
         this.#retry = options.retry;
         this.#keepAlive = options.keepAlive;
         this.#headers = options.headers;
         this.#backpressure = options.backpressure;
         this.#maxDuration = options.maxDuration;
+        this.#stream.once('close', () => this.close());
     }
 
     get isOpen(): boolean {
@@ -93,14 +93,6 @@ export class Session {
         }
 
         this.#initialized = true;
-
-        this.#res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            Connection: 'keep-alive',
-            'X-Accel-Buffering': 'no',
-            ...this.#headers,
-        });
 
         const socket = this.request.raw.req.socket;
 
@@ -146,7 +138,11 @@ export class Session {
 
         if (this.#backpressure) {
             const payload = this.#buffer.read();
-            const pendingBytes = this.#res.writableLength + Buffer.byteLength(payload, 'utf8');
+            const pendingBytes =
+                this.#stream.readableLength +
+                this.#stream.writableLength +
+                this.request.raw.res.writableLength +
+                Buffer.byteLength(payload, 'utf8');
 
             if (pendingBytes > this.#backpressure.maxBytes) {
                 this.#buffer.clear();
@@ -208,26 +204,45 @@ export class Session {
             this.#maxDurationTimer = null;
         }
 
-        this.#res.end();
+        this.#stream.end();
     }
 
     /** @internal */
-    #flush(): boolean {
+    onClose(listener: () => void): void {
+        this.#stream.once('close', listener);
+    }
+
+    /** @internal */
+    respond(h: ResponseToolkit): ResponseObject {
+        const response = h.response(this.#stream).type('text/event-stream');
+
+        // Without a charset hapi would append "; charset=utf-8" to every text/* type.
+        response.charset();
+
+        // Stops hapi from compressing: zlib buffers events and costs memory per open connection.
+        response.compressed('identity');
+
+        const headers: Record<string, string> = {
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+            'x-accel-buffering': 'no',
+            ...this.#headers,
+        };
+
+        for (const [name, value] of Object.entries(headers)) {
+            response.header(name, value);
+        }
+
+        return response;
+    }
+
+    /** @internal */
+    #flush(): void {
         const data = this.#buffer.read();
 
         if (data) {
-            try {
-                this.#res.write(data);
-            } catch {
-                this.#buffer.clear();
-                this.close();
-
-                return false;
-            }
-
+            this.#stream.write(data);
             this.#buffer.clear();
         }
-
-        return true;
     }
 }

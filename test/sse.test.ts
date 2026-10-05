@@ -221,7 +221,7 @@ describe.concurrent('SSE Plugin', () => {
         expect(blocked.status).toBe(204);
     });
 
-    it('onSubscribe calling session.close() abandons the request without setup', async ({ onTestFinished }) => {
+    it('onSubscribe calling session.close() responds 204 without setup', async ({ onTestFinished }) => {
         let onSessionFired = false;
         let onUnsubscribeFired = false;
 

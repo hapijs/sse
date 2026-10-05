@@ -224,20 +224,15 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                         const matched = registry.matchPath(request.path)!;
 
                         if (subConfig.refuse && (await subConfig.refuse(request))) {
-                            request.raw.res.writeHead(204);
-                            request.raw.res.end();
-
-                            return h.abandon;
+                            return h.response().code(204);
                         }
 
                         const incomingId = readLastEventId(request);
 
                         if (incomingId && (await completionStore.get(incomingId))) {
                             await completionStore.drop(incomingId);
-                            request.raw.res.writeHead(204);
-                            request.raw.res.end();
 
-                            return h.abandon;
+                            return h.response().code(204);
                         }
 
                         const maxSessions = subConfig.maxSessions;
@@ -260,41 +255,14 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                         }
 
                         if (!session.isOpen) {
-                            return h.abandon;
+                            return h.response().code(204);
                         }
 
                         session.initialize();
                         registry.addSession(matched.pattern, session, matched.params, request.path);
                         totalConnections++;
 
-                        if (hooks?.onSession) {
-                            try {
-                                hooks.onSession(session, request.path, matched.params);
-                            } catch {
-                                /* hooks must not break SSE */
-                            }
-                        }
-
-                        const replayer = subConfig.replay;
-
-                        if (session.lastEventId && replayer) {
-                            const entries = replayer.replay(session.lastEventId);
-
-                            for (const entry of entries) {
-                                session.push(entry.data, entry.event, entry.id);
-                            }
-                        }
-
-                        if (session.lastEventId && subConfig.onReconnect) {
-                            try {
-                                await subConfig.onReconnect(session, request.path, matched.params);
-                            } catch {
-                                registry.removeSession(session);
-                                session.close();
-                            }
-                        }
-
-                        request.raw.req.once('close', () => {
+                        session.onClose(() => {
                             totalDisconnections++;
 
                             if (hooks?.onSessionClose) {
@@ -314,10 +282,42 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                             }
 
                             registry.removeSession(session);
-                            session.close();
                         });
 
-                        return h.abandon;
+                        if (hooks?.onSession) {
+                            try {
+                                hooks.onSession(session, request.path, matched.params);
+                            } catch {
+                                /* hooks must not break SSE */
+                            }
+                        }
+
+                        const replayer = subConfig.replay;
+
+                        if (session.lastEventId && replayer) {
+                            const entries = replayer.replay(session.lastEventId);
+
+                            for (const entry of entries) {
+                                session.push(entry.data, entry.event, entry.id);
+                            }
+                        }
+
+                        const response = session.respond(h);
+                        const onReconnect = subConfig.onReconnect;
+
+                        if (session.lastEventId && onReconnect) {
+                            // Detached so headers and replayed events reach the client without waiting on it.
+                            (async () => {
+                                try {
+                                    await onReconnect(session, request.path, matched.params);
+                                } catch {
+                                    registry.removeSession(session);
+                                    session.close();
+                                }
+                            })();
+                        }
+
+                        return response;
                     },
                 });
             },
@@ -370,7 +370,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                 `Invalid @hapi/sse handler options for ${route.method.toUpperCase()} ${route.path}:`,
             );
 
-            return async (request: Request, h: ResponseToolkit): Promise<Lifecycle.ReturnValue> => {
+            return (request: Request, h: ResponseToolkit): Lifecycle.ReturnValue => {
                 const session = new Session({
                     request,
                     retry: clampRetry(handlerOptions.retry ?? config.retry),
@@ -382,17 +382,18 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
                 session.initialize();
 
-                request.raw.req.once('close', () => {
-                    session.close();
-                });
+                const response = session.respond(h);
 
-                try {
-                    await handlerOptions.stream(request, session);
-                } catch {
-                    session.close();
-                }
+                // The stream runs for the life of the connection; hapi transmits the response meanwhile.
+                (async () => {
+                    try {
+                        await handlerOptions.stream(request, session);
+                    } catch {
+                        session.close();
+                    }
+                })();
 
-                return h.abandon;
+                return response;
             };
         });
 
