@@ -52,7 +52,24 @@ await server.register({
 
 SSE responses go through hapi's normal response lifecycle. Route config applies to them (`cors`, `security`), and `onPreResponse` sees them. The handler returns as soon as the stream is set up, so `onPostResponse` and the `response` event fire when the stream ends. A client disconnect ends the request with hapi's `disconnectStatusCode` (499) and logs `response`/`error`/`aborted`.
 
-SSE responses are never compressed and carry `content-encoding: identity`. zlib holds events until it flushes and keeps a compression context in memory for each open connection.
+## Compression
+
+SSE responses are compressed with gzip or deflate when the client accepts it. SSE routes set hapi's [`compression`](https://hapi.dev/api/#route.options.compression) route option to `flush: Z_SYNC_FLUSH`, so each event is sent as soon as it is written.
+
+Each open compressed connection holds its own zlib state: 256 KiB with zlib's defaults, about 300 KiB of RSS per connection on Node 24. Every event is also compressed once per session. To shrink the state, set `windowBits` or `memLevel` in the server's `routes.compression.gzip` and `routes.compression.deflate`; they merge under the plugin's `flush` on every SSE route.
+
+To turn compression off:
+
+- **All responses:** `Hapi.server({ compression: false })`.
+- **SSE only:** `Hapi.server({ mime: { override: { 'text/event-stream': { compressible: false } } } })`.
+
+hapi 21 has no per-route switch: a route's `options.compression` only sets encoder settings, merged over the plugin's `flush`.
+
+Encoders registered with `server.encoder()` do not get the `flush` setting, and hapi prefers them over gzip, so a registered `br` encoder buffers events for browsers unless it flushes:
+
+```typescript
+Hapi.server({ routes: { compression: { br: { flush: zlib.constants.BROTLI_OPERATION_FLUSH } } } });
+```
 
 ## API
 
@@ -368,7 +385,7 @@ class RedisReplayer implements Replayer {
 
 ## Backpressure
 
-Protects against slow consumers accumulating unbounded memory. Counts the bytes queued in the session's stream and in the Node response buffer, not bytes already handed to the kernel. Configurable at plugin level or per-handler.
+Protects against slow consumers accumulating unbounded memory. Counts the bytes queued in the session's stream and in the Node response buffer, not bytes already handed to the kernel. Configurable at plugin level or per-handler. On a compressed response, bytes inside zlib's own buffers are not counted either. Compression also slows delivery, so high-rate streams trip backpressure sooner; the `text/event-stream` mime override (see [Compression](#compression)) turns it off for SSE.
 
 ```typescript
 // Plugin level — applies to all subscription sessions

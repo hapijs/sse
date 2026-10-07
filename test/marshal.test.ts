@@ -1,6 +1,7 @@
 import * as timers from 'node:timers/promises';
 import { expect, describe, it } from 'vitest';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 
 import Hapi from '@hapi/hapi';
@@ -30,7 +31,6 @@ const receive = (
     const { headers = {}, until, timeout = 2000 } = opts;
 
     return new Promise((resolve) => {
-        const start = Date.now();
         const chunks: Chunk[] = [];
         let text = '';
         let status = 0;
@@ -46,11 +46,11 @@ const receive = (
             status = res.statusCode!;
             responseHeaders = res.headers;
 
-            const body = res.headers['content-encoding'] === 'gzip' ? res.pipe(zlib.createGunzip()) : res;
+            const body = res.headers['content-encoding'] ? res.pipe(zlib.createUnzip()) : res;
 
             body.setEncoding('utf8');
             body.on('data', (chunk: string) => {
-                chunks.push({ at: Date.now() - start, text: chunk });
+                chunks.push({ at: Date.now(), text: chunk });
                 text += chunk;
 
                 if (until(text)) {
@@ -180,7 +180,7 @@ describe.concurrent('SSE response marshalling', () => {
         expect(res.headers['x-custom']).toBe('abc');
     });
 
-    it('sends events uncompressed one at a time when the client accepts gzip', async ({ onTestFinished }) => {
+    it.for(['gzip', 'deflate'])('streams %s-compressed events one at a time', async (encoding, { onTestFinished }) => {
         const server = Hapi.server({ port: 0 });
         onTestFinished(() => server.stop());
         await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
@@ -193,11 +193,9 @@ describe.concurrent('SSE response marshalling', () => {
             handler: {
                 sse: {
                     stream: async (_request, session) => {
-                        const start = Date.now();
-
                         for (let i = 0; i < 3; ++i) {
                             await timers.setTimeout(150);
-                            sentAt.push(Date.now() - start);
+                            sentAt.push(Date.now());
                             session.push(`e${i}`);
                         }
 
@@ -209,11 +207,11 @@ describe.concurrent('SSE response marshalling', () => {
         await server.start();
 
         const res = await receive(`http://localhost:${server.info.port}/stream`, {
-            headers: { 'accept-encoding': 'gzip' },
+            headers: { 'accept-encoding': encoding },
             until: (text) => text.includes('data: e2'),
         });
 
-        expect(res.headers['content-encoding']).toBe('identity');
+        expect(res.headers['content-encoding']).toBe(encoding);
 
         const firstOk = res.chunks.find((c) => c.text.includes(': ok'))!;
 
@@ -226,34 +224,54 @@ describe.concurrent('SSE response marshalling', () => {
         }
     });
 
-    it('delivers the last event of a burst larger than the stream buffers', async ({ onTestFinished }) => {
+    it('delivers the last event of a gzip burst larger than the zlib buffers', async ({ onTestFinished }) => {
         const server = Hapi.server({ port: 0 });
         onTestFinished(() => server.stop());
         await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
-
-        server.route({
-            method: 'GET',
-            path: '/stream',
-            handler: {
-                sse: {
-                    stream: (_request, session) => {
-                        for (let i = 0; i < 150; ++i) {
-                            session.push('x'.repeat(1024));
-                        }
-
-                        session.push('final');
-                    },
-                },
-            },
-        });
+        server.sse.subscription('/events');
         await server.start();
 
-        const res = await receive(`http://localhost:${server.info.port}/stream`, {
+        const url = `http://localhost:${server.info.port}/events`;
+        const received = receive(url, {
             headers: { 'accept-encoding': 'gzip' },
             until: (text) => text.includes('data: final'),
         });
 
+        while (server.sse.sessionCount === 0) {
+            await timers.setTimeout(5);
+        }
+
+        for (let i = 0; i < 150; ++i) {
+            await server.sse.publish('/events', crypto.randomBytes(512).toString('hex'));
+        }
+
+        await server.sse.publish('/events', 'final');
+
+        const res = await received;
+
+        expect(res.headers['content-encoding']).toBe('gzip');
         expect(res.chunks.map((c) => c.text).join('')).toContain('data: final');
+    });
+
+    it.for<[string, Hapi.ServerOptions]>([
+        ['compression: false', { compression: false }],
+        ['a mime override', { mime: { override: { 'text/event-stream': { compressible: false } } } }],
+    ])('sends events uncompressed when the server turns compression off with %s', async ([, serverOptions], {
+        onTestFinished,
+    }) => {
+        const server = Hapi.server({ port: 0, ...serverOptions });
+        onTestFinished(() => server.stop());
+        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+        server.sse.subscription('/events');
+        await server.start();
+
+        const res = await receive(`http://localhost:${server.info.port}/events`, {
+            headers: { 'accept-encoding': 'gzip' },
+            until: (text) => text.includes(': ok'),
+        });
+
+        expect(res.status).toBe(200);
+        expect(res.headers['content-encoding']).toBeUndefined();
     });
 
     it('sends replayed events before a slow onReconnect resolves', async ({ onTestFinished }) => {

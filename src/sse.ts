@@ -1,8 +1,17 @@
-import type { NamedPlugin, Request, RequestRoute, ResponseToolkit, RouteOptions, Lifecycle } from '@hapi/hapi';
+import type {
+    HandlerDecorationMethod,
+    NamedPlugin,
+    Request,
+    RequestRoute,
+    ResponseToolkit,
+    RouteOptions,
+    Lifecycle,
+} from '@hapi/hapi';
 import Boom from '@hapi/boom';
 import * as Hoek from '@hapi/hoek';
 import Joi from 'joi';
 import { createRequire } from 'node:module';
+import Zlib from 'node:zlib';
 
 import { Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
@@ -91,6 +100,12 @@ const RETRY_FLOOR = 1000;
 
 const clampRetry = (value: number | null): number | null => {
     return value === null ? null : Math.max(value, RETRY_FLOOR);
+};
+
+// Sync-flushes every write so a compressed stream delivers each event as it is sent.
+const compression: RouteOptions['compression'] = {
+    gzip: { flush: Zlib.constants.Z_SYNC_FLUSH },
+    deflate: { flush: Zlib.constants.Z_SYNC_FLUSH },
 };
 
 const COMPLETION_DEFAULTS: CompletionCacheOptions = {
@@ -210,7 +225,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
                 registry.register(path, subConfig as SubscriptionConfig);
 
-                const routeConfig: RouteOptions = {};
+                const routeConfig: RouteOptions = { compression };
 
                 if (subConfig.auth !== undefined) {
                     routeConfig.auth = subConfig.auth;
@@ -363,7 +378,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
         server.decorate('server', 'sse', api);
 
-        server.decorate('handler', 'sse', (route: RequestRoute, handlerOptions: SseHandlerOptions) => {
+        const sseHandler: HandlerDecorationMethod = (route: RequestRoute, handlerOptions: SseHandlerOptions) => {
             Joi.attempt(
                 handlerOptions,
                 handlerOptionsSchema,
@@ -395,7 +410,10 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
 
                 return response;
             };
-        });
+        };
+
+        sseHandler.defaults = { compression };
+        server.decorate('handler', 'sse', sseHandler);
 
         server.ext('onPreStop', () => {
             registry.closeAll();
