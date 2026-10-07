@@ -219,9 +219,6 @@ export class Session {
         // Without a charset hapi would append "; charset=utf-8" to every text/* type.
         response.charset();
 
-        // Stops hapi from compressing: zlib buffers events and costs memory per open connection.
-        response.compressed('identity');
-
         const headers: Record<string, string> = {
             'cache-control': 'no-cache',
             connection: 'keep-alive',

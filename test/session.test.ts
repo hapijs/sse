@@ -76,7 +76,6 @@ describe.concurrent('Session', () => {
         const response: any = {
             type: () => response,
             charset: () => response,
-            compressed: () => response,
             header: () => response,
         };
         const h: any = {

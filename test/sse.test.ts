@@ -353,7 +353,10 @@ describe.concurrent('SSE Plugin', () => {
             });
         });
 
-        await timers.setTimeout(50);
+        while (server.sse.sessionCount === 0) {
+            await timers.setTimeout(5);
+        }
+
         await server.sse.eachSession((session) => session.complete());
 
         const completionToken = await firstConnect;
@@ -372,7 +375,11 @@ describe.concurrent('SSE Plugin', () => {
             timeout: 500,
             headers: { 'Last-Event-ID': completionToken },
         });
-        await timers.setTimeout(50);
+
+        while (server.sse.sessionCount === 0) {
+            await timers.setTimeout(5);
+        }
+
         await server.sse.publish('/events', { ok: true }, { event: 'msg' });
         const secondReconnect = await secondReconnectPromise;
         expect(secondReconnect.status).toBe(200);
