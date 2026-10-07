@@ -8,7 +8,7 @@ describe.concurrent('Session', () => {
             headers: {},
             raw: {
                 req: { socket: {} },
-                res: { writeHead: () => {}, end: () => {} },
+                res: { writableLength: 0 },
             },
         } as any;
 
@@ -27,13 +27,7 @@ describe.concurrent('Session', () => {
     });
 
     it('cleans up keep-alive timer when the session is closed', async () => {
-        const mockRes = {
-            writeHead: () => {},
-            write: () => {
-                return true;
-            },
-            end: () => {},
-        } as any;
+        const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
             headers: {},
@@ -55,49 +49,9 @@ describe.concurrent('Session', () => {
         session.close();
     });
 
-    it('closes the session when a flush error occurs during a push', async () => {
-        const mockRes = {
-            writeHead: () => {},
-            write: () => {
-                throw new Error('write error');
-            },
-            end: () => {},
-        } as any;
-
-        const mockRequest = {
-            headers: {},
-            raw: {
-                req: { socket: {} },
-                res: mockRes,
-            },
-        } as any;
-
-        const session = new Session({
-            request: mockRequest,
-            retry: null,
-            keepAlive: false,
-            headers: {},
-        });
-
-        session.initialize();
-        // push will trigger flush which will throw
-        const result = session.push({ data: 1 });
-
-        expect(result).toBe(false);
-        expect(session.isOpen).toBe(false);
-    });
-
     it('complete() sends a final event, writes the session id to the realm completion store, and closes', async () => {
         const writes: string[] = [];
-        const mockRes = {
-            writeHead: () => {},
-            write: (chunk: string) => {
-                writes.push(chunk);
-
-                return true;
-            },
-            end: () => {},
-        } as any;
+        const mockRes = { writableLength: 0 } as any;
 
         const stored: string[] = [];
         const completionStore = {
@@ -119,6 +73,21 @@ describe.concurrent('Session', () => {
 
         expect(session.id).toMatch(/^[0-9a-f-]{36}$/);
 
+        const response: any = {
+            type: () => response,
+            charset: () => response,
+            header: () => response,
+        };
+        const h: any = {
+            response: (stream: NodeJS.ReadableStream) => {
+                stream.setEncoding('utf8');
+                stream.on('data', (chunk: string) => writes.push(chunk));
+
+                return response;
+            },
+        };
+
+        session.respond(h);
         session.initialize();
         await session.complete();
 
@@ -142,7 +111,7 @@ describe.concurrent('Session', () => {
         const session = new Session({
             request: {
                 headers: {},
-                raw: { req: { socket: {} }, res: { writeHead: () => {}, write: () => true, end: () => {} } as any },
+                raw: { req: { socket: {} }, res: { writableLength: 0 } },
                 route: { realm: { plugins: { '@hapi/sse': { completionStore } } } },
             } as any,
             retry: null,
@@ -167,7 +136,7 @@ describe.concurrent('Session', () => {
         const session = new Session({
             request: {
                 headers: {},
-                raw: { req: { socket: {} }, res: { writeHead: () => {}, write: () => true, end: () => {} } as any },
+                raw: { req: { socket: {} }, res: { writableLength: 0 } },
                 route: { realm: { plugins: { '@hapi/sse': { completionStore } } } },
             } as any,
             retry: null,
@@ -187,7 +156,7 @@ describe.concurrent('Session', () => {
             headers: { 'last-event-id': ['id1', 'id2'] },
             raw: {
                 req: { socket: {} },
-                res: { writeHead: () => {}, end: () => {} },
+                res: { writableLength: 0 },
             },
         } as any;
 
@@ -202,12 +171,7 @@ describe.concurrent('Session', () => {
     });
 
     it('does not exceed backpressure maxBytes when within limit', async () => {
-        const mockRes = {
-            writeHead: () => {},
-            write: () => true,
-            end: () => {},
-            writableLength: 0,
-        } as any;
+        const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
             headers: {},
@@ -231,9 +195,7 @@ describe.concurrent('Session', () => {
         expect(session.isOpen).toBe(true);
     });
     it('can be closed when not initialized', async () => {
-        const mockRes = {
-            end: () => {},
-        } as any;
+        const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
             headers: {},
@@ -254,12 +216,8 @@ describe.concurrent('Session', () => {
         expect(session.isOpen).toBe(false);
     });
 
-    it('does not write to the response when flushing an empty buffer', async () => {
-        const mockRes = {
-            writeHead: () => {},
-            write: () => true,
-            end: () => {},
-        } as any;
+    it('skips the stream write when the buffer is empty at flush time', async () => {
+        const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
             headers: {},
