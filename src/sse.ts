@@ -310,10 +310,16 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
                         const replayer = subConfig.replay;
 
                         if (session.lastEventId && replayer) {
-                            const entries = replayer.replay(session.lastEventId);
+                            try {
+                                for (const entry of replayer.replay(session.lastEventId)) {
+                                    session.push(entry.data, entry.event, entry.id);
+                                }
+                            } catch (err) {
+                                // An error response would stop EventSource for good; an ended stream makes it retry.
+                                request.log(['sse', 'replay', 'error'], err instanceof Error ? err : String(err));
+                                session.close();
 
-                            for (const entry of entries) {
-                                session.push(entry.data, entry.event, entry.id);
+                                return session.respond(h);
                             }
                         }
 

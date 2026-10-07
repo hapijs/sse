@@ -188,6 +188,13 @@ describe.concurrent('EventBuffer', () => {
         expect(buf.read()).toBe('event: evt\ndata: data\n\n');
     });
 
+    it('push() with an invalid id leaves no partial event behind to relabel the next one', () => {
+        const buf = new EventBuffer();
+
+        expect(() => buf.push('data', 'alert', 'a\u0000b')).toThrow(/null characters/);
+        expect(buf.read()).toBe('');
+    });
+
     it('event() strips newlines to prevent field injection', () => {
         const buf = new EventBuffer();
 

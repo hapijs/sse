@@ -107,8 +107,8 @@ server.sse.subscription('/chat/{room}', {
 | `filter`        | `(path, message, opts) => boolean \| { override } \| Promise<...>` | Per-session delivery filter                                                                     |
 | `onSubscribe`   | `(session, path, params) => void \| Promise<void>`                 | Fires before SSE headers are sent. Throwing a Boom error returns that HTTP error to the client. Closing the session responds with `204 No Content`. |
 | `onUnsubscribe` | `(session, path, params) => void`                                  | Fires on client disconnect                                                                      |
-| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present, after replay. Runs without delaying the response. Errors close the session gracefully. |
-| `replay`        | `Replayer`                                                         | Replay provider for automatic reconnection replay                                               |
+| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present, after replay. Skipped when replay fails. Runs without delaying the response. Errors close the session gracefully. |
+| `replay`        | `Replayer`                                                         | Replay provider for automatic reconnection replay. If replay fails (`replay()` throws or returns an entry with an invalid `id`), the error is reported with `request.log()` (tags `sse`, `replay`, `error`), the stream ends, and the client reconnects after `retry`. A replayer that keeps returning an invalid entry fails every reconnect until that entry is gone; the built-in replayers' `record()` throws on one. |
 | `maxSessions`   | `number`                                                           | Maximum concurrent sessions for this subscription. Excess connections receive a 503 response.   |
 | `maxDuration`   | `number`                                                           | Maximum connection lifetime in ms. Sessions are closed after this duration (with ±10% jitter to prevent thundering herd reconnections). A `: session expired` comment is sent before closing. |
 
@@ -136,7 +136,7 @@ console.log(`Delivered to ${delivered} sessions`);
 - `'pattern'` (default) — delivers to all sessions on a matching subscription pattern (e.g. `/chat/{room}`)
 - `'literal'` — only delivers to sessions whose actual connected path equals `path` exactly. Useful for parameterized subscriptions where you want to target `/chat/general` but not `/chat/random`.
 
-**Note:** Only events published with an explicit `id` are recorded by the replayer. Events without an `id` are delivered but not stored for replay.
+**Note:** Only events published with an explicit `id` are recorded by the replayer. Events without an `id` are delivered but not stored for replay. `publish()` rejects an `id` containing a null character before anything is delivered or recorded.
 
 ### `server.sse.broadcast(data, opts?)`
 
@@ -148,6 +148,8 @@ const count = await server.sse.broadcast(
     { event: 'system' },
 );
 ```
+
+`broadcast()` rejects an `id` containing a null character before anything is delivered.
 
 ### `server.sse.eachSession(fn, opts?)`
 

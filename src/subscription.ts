@@ -1,5 +1,6 @@
 import type { Request, RouteOptions } from '@hapi/hapi';
 
+import { assertEventId } from './event-buffer.js';
 import { Session } from './session.js';
 import type { Replayer } from './replayer.js';
 
@@ -145,6 +146,8 @@ export class SubscriptionRegistry {
         data: T,
         opts?: { event?: string; id?: string; internal?: unknown; matchMode?: 'pattern' | 'literal' },
     ): Promise<number> {
+        assertEventId(opts?.id);
+
         const matched = this.matchPath(path);
 
         if (!matched) {
@@ -204,6 +207,8 @@ export class SubscriptionRegistry {
     }
 
     async broadcast(data: unknown, opts?: { event?: string; id?: string }): Promise<number> {
+        assertEventId(opts?.id);
+
         let delivered = 0;
 
         for (const sub of this.#subscriptions.values()) {
