@@ -1,3 +1,9 @@
+export const assertEventId = (id?: string): void => {
+    if (id?.includes('\0')) {
+        throw new Error('Event ID must not contain null characters');
+    }
+};
+
 export class EventBuffer {
     /** @internal */
     #buffer = '';
@@ -20,9 +26,7 @@ export class EventBuffer {
     }
 
     id(id: string): this {
-        if (id.includes('\0')) {
-            throw new Error('Event ID must not contain null characters');
-        }
+        assertEventId(id);
 
         this.#buffer += `id: ${id.replace(/[\r\n]/g, '')}\n`;
 
@@ -60,6 +64,8 @@ export class EventBuffer {
     }
 
     push(data: unknown, event?: string, id?: string): this {
+        assertEventId(id);
+
         if (event) {
             this.event(event);
         }
