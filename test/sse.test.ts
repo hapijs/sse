@@ -9,6 +9,7 @@ import Boom from '@hapi/boom';
 
 import { SsePlugin } from '../src/sse.js';
 import { FiniteReplayer, ValidReplayer } from '../src/replayer.js';
+import type { Session } from '../src/session.js';
 
 interface SseOptions {
     maxEvents?: number;
@@ -4465,6 +4466,128 @@ describe.concurrent('SSE Plugin', () => {
 
         it('ValidReplayer rejects non-integer ttl', () => {
             expect(() => new ValidReplayer({ ttl: 50.5 })).toThrow(/Invalid ValidReplayer options.*ttl/i);
+        });
+    });
+
+    describe('replay failures and invalid event ids', () => {
+        it('ends the stream and releases the maxSessions slot when replay() throws', async ({
+            onTestFinished,
+            expect,
+        }) => {
+            const server = Hapi.server({ port: 0 });
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: { interval: 20 } } });
+
+            let failed: Session | undefined;
+            let unsubscribed = 0;
+            let reconnected = 0;
+            const logged: string[] = [];
+
+            server.events.on({ name: 'request', channels: 'app' }, (_request, event) => {
+                logged.push(`${event.tags.join(',')}: ${event.error instanceof Error ? event.error.message : ''}`);
+            });
+
+            server.sse.subscription('/events', {
+                maxSessions: 1,
+                replay: {
+                    record: () => {},
+                    replay: () => {
+                        throw new Error('replay store unavailable');
+                    },
+                },
+                onSubscribe: (session) => {
+                    failed ??= session;
+                },
+                onUnsubscribe: () => {
+                    unsubscribed++;
+                },
+                onReconnect: () => {
+                    reconnected++;
+                },
+            });
+            await server.start();
+
+            const url = `http://localhost:${server.info.port}/events`;
+            const ended = await collectSse(url, { timeout: 500, headers: { 'last-event-id': '1' } });
+
+            expect(ended.status).toBe(200);
+            expect(ended.events).toEqual([]);
+            expect(reconnected).toBe(0);
+            expect(logged).toEqual(['sse,replay,error: replay store unavailable']);
+            await expect.poll(() => unsubscribed).toBe(1);
+            expect(failed!.isOpen).toBe(false);
+            expect(server.sse.sessionCount).toBe(0);
+
+            const next = collectSse(url, { timeout: 1000 });
+
+            await expect.poll(() => server.sse.sessionCount).toBe(1);
+            await server.sse.publish('/events', 'after');
+
+            expect((await next).status).toBe(200);
+        });
+
+        it('logs a non-Error thrown by replay() as a string', async ({ onTestFinished }) => {
+            const server = Hapi.server({ port: 0 });
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+
+            const logged: unknown[] = [];
+
+            server.events.on({ name: 'request', channels: 'app' }, (_request, event) => {
+                logged.push(event.data);
+            });
+
+            server.sse.subscription('/events', {
+                replay: {
+                    record: () => {},
+                    replay: () => {
+                        throw 'store down';
+                    },
+                },
+            });
+            await server.start();
+
+            await collectSse(`http://localhost:${server.info.port}/events`, {
+                timeout: 500,
+                headers: { 'last-event-id': '1' },
+            });
+
+            expect(logged).toEqual(['store down']);
+        });
+
+        it('rejects a publish whose id contains a null character before recording it', async ({
+            onTestFinished,
+        }) => {
+            const server = Hapi.server({ port: 0 });
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+
+            const recorded: string[] = [];
+
+            server.sse.subscription('/events', {
+                replay: {
+                    record: (entry) => {
+                        recorded.push(entry.id);
+                    },
+                    replay: () => [],
+                },
+            });
+
+            await expect(server.sse.publish('/events', 'poison', { id: 'a\u0000b' })).rejects.toThrow(
+                /null characters/,
+            );
+            expect(recorded).toEqual([]);
+        });
+
+        it('rejects a broadcast whose id contains a null character even with no sessions', async ({
+            onTestFinished,
+        }) => {
+            const server = Hapi.server({ port: 0 });
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin });
+            server.sse.subscription('/events');
+
+            await expect(server.sse.broadcast('poison', { id: 'a\u0000b' })).rejects.toThrow(/null characters/);
         });
     });
 });
