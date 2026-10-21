@@ -221,7 +221,7 @@ describe.concurrent('SSE Plugin', () => {
         expect(blocked.status).toBe(204);
     });
 
-    it('onSubscribe calling session.close() abandons the request without setup', async ({ onTestFinished }) => {
+    it('onSubscribe calling session.close() responds 204 without setup', async ({ onTestFinished }) => {
         let onSessionFired = false;
         let onUnsubscribeFired = false;
 
@@ -352,7 +352,10 @@ describe.concurrent('SSE Plugin', () => {
             });
         });
 
-        await timers.setTimeout(50);
+        while (server.sse.sessionCount === 0) {
+            await timers.setTimeout(5);
+        }
+
         await server.sse.eachSession((session) => session.complete());
 
         const completionToken = await firstConnect;
@@ -371,7 +374,11 @@ describe.concurrent('SSE Plugin', () => {
             timeout: 500,
             headers: { 'Last-Event-ID': completionToken },
         });
-        await timers.setTimeout(50);
+
+        while (server.sse.sessionCount === 0) {
+            await timers.setTimeout(5);
+        }
+
         await server.sse.publish('/events', { ok: true }, { event: 'msg' });
         const secondReconnect = await secondReconnectPromise;
         expect(secondReconnect.status).toBe(200);

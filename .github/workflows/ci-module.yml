@@ -18,6 +18,9 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
+      # npm 10 (bundled with node 22) crashes resolving vitest's peer deps.
+      - if: matrix.node-version == 22
+        run: npm install -g npm@11
       - run: npm install
       - run: npm run lint
       - run: npm run build
