@@ -1,6 +1,6 @@
 export { EventBuffer } from './event-buffer.js';
 export { Session } from './session.js';
-export type { BackpressureOptions } from './session.js';
+export type { BackpressureOptions, SessionOptions } from './session.js';
 export { SsePlugin } from './sse.js';
 export type {
     SsePluginOptions,

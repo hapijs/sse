@@ -134,19 +134,12 @@ export class Session {
             return false;
         }
 
-        this.#buffer.push(data, event, id);
-
         if (this.#backpressure) {
-            const payload = this.#buffer.read();
+            // Counts what is already queued, so one large event to a client that is keeping up still goes out.
             const pendingBytes =
-                this.#stream.readableLength +
-                this.#stream.writableLength +
-                this.request.raw.res.writableLength +
-                Buffer.byteLength(payload, 'utf8');
+                this.#stream.readableLength + this.#stream.writableLength + this.request.raw.res.writableLength;
 
             if (pendingBytes > this.#backpressure.maxBytes) {
-                this.#buffer.clear();
-
                 if (this.#backpressure.strategy === 'close') {
                     this.close();
                 }
@@ -155,6 +148,7 @@ export class Session {
             }
         }
 
+        this.#buffer.push(data, event, id);
         this.#flush();
 
         return true;
@@ -212,7 +206,7 @@ export class Session {
         this.#stream.once('close', listener);
     }
 
-    /** @internal */
+    /** Wraps the session stream in a hapi response. Lets any handler, on any method, return the session. */
     respond(h: ResponseToolkit): ResponseObject {
         const response = h.response(this.#stream).type('text/event-stream');
 
