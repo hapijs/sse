@@ -219,6 +219,7 @@ const stats = server.sse.stats();
 The `Session` object represents a single SSE connection.
 
 ```typescript
+session.initialize()              // Send the opening frame and start keep-alive. Standalone sessions only.
 session.push(data, event?, id?)   // Send an event. Returns boolean (false if dropped/closed).
 session.comment(text?)            // Send a comment (invisible to EventSource)
 session.close()                   // End the connection (client will reconnect)
@@ -228,6 +229,7 @@ session.isOpen                    // true if connection is still active
 session.connectedAt               // Unix timestamp (ms) when the session was created
 session.lastEventId               // Value of Last-Event-ID header (empty string if absent)
 session.request                   // The original hapi Request object
+session.respond(h)                // Wrap the stream in a hapi response. See "Standalone Sessions".
 ```
 
 **Stream completion** — when the stream has done its work and the client should not reconnect, call `session.complete()` instead of `session.close()`:
@@ -325,6 +327,56 @@ server.route({
 | `backpressure` | `BackpressureOptions`                         | Override plugin-level backpressure (default: inherits from plugin)                |
 | `maxDuration`  | `number`                                      | Maximum connection lifetime in ms (with ±10% jitter). Sends a comment before closing. |
 
+## Standalone Sessions
+
+A `Session` needs only a request, so any handler on any method can return one, with or without the plugin registered. Use this when the handler chooses between SSE and another response after it has started working. The decorator and subscriptions cannot do that because they commit to a stream first.
+
+```typescript
+import { Session } from '@hapi/sse';
+import Zlib from 'node:zlib';
+
+server.route({
+    method: 'POST',
+    path: '/jobs',
+    options: {
+        // Subscriptions and the decorator set this for you. Without it, gzip and deflate hold events back.
+        compression: {
+            gzip: { flush: Zlib.constants.Z_SYNC_FLUSH },
+            deflate: { flush: Zlib.constants.Z_SYNC_FLUSH },
+        },
+        handler: async (request, h) => {
+            const job = await startJob(request.payload);
+
+            if (job.done) {
+                return job.result;
+            }
+
+            const session = new Session({ request });
+
+            session.initialize();
+            job.on('progress', (update) => session.push(update, 'progress'));
+            job.on('end', () => session.close());
+            request.events.once('disconnect', () => job.cancel());
+
+            return session.respond(h);
+        },
+    },
+});
+```
+
+Create the session on the branch that streams, then call `initialize()` before `push()`. Replay needs a subscription, so it does not apply here. Plugin-level `retry`, `keepAlive`, `headers` and `backpressure` never reach a standalone session; omitted options take the built-in defaults below.
+
+**Session options:**
+
+| Option         | Type                            | Description                                                                 |
+| -------------- | ------------------------------- | --------------------------------------------------------------------------- |
+| `request`      | `Request`                       | Required. The hapi request.                                                 |
+| `retry`        | `number \| null`                | Client reconnect delay in ms (default: `2000`). `null` sends no `retry` field. The 1000 ms floor applies only to plugin, subscription, and handler options. |
+| `keepAlive`    | `{ interval: number } \| false` | Comment interval, started by `initialize()` (default: `{ interval: 15_000 }`). |
+| `headers`      | `Record<string, string>`        | Extra response headers (default: `{}`).                                     |
+| `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). A session without this has no limit.                                          |
+| `maxDuration`  | `number`                        | Maximum connection lifetime in ms (with ±10% jitter).                       |
+
 ## Event Replay
 
 SSE clients automatically send a `Last-Event-ID` header when reconnecting after a dropped connection. When a replayer is configured, the plugin uses that ID to find where the client left off and pushes any events published after it — so the client catches up on what it missed while disconnected.
@@ -387,7 +439,7 @@ class RedisReplayer implements Replayer {
 
 ## Backpressure
 
-Protects against slow consumers accumulating unbounded memory. Counts the bytes queued in the session's stream and in the Node response buffer, not bytes already handed to the kernel. Configurable at plugin level or per-handler. On a compressed response, bytes inside zlib's own buffers are not counted either. Compression also slows delivery, so high-rate streams trip backpressure sooner; the `text/event-stream` mime override (see [Compression](#compression)) turns it off for SSE.
+Protects against slow consumers accumulating unbounded memory. Counts the bytes queued in the session's stream and in the Node response buffer, not bytes already handed to the kernel. Configurable at plugin level or per-handler. On a compressed response, bytes inside zlib's own buffers are not counted either. Compression also slows delivery, so high-rate streams trip backpressure sooner; the `text/event-stream` mime override (see [Compression](#compression)) turns it off for SSE. `maxBytes` limits what is already queued, so a session can hold `maxBytes` plus one event, and it does not cap event size: an event over `maxBytes` goes out when the queue is under the limit.
 
 ```typescript
 // Plugin level — applies to all subscription sessions
@@ -415,7 +467,7 @@ server.route({
 
 | Strategy  | Behavior                                                |
 | --------- | ------------------------------------------------------- |
-| `'close'` | Closes the session when pending bytes exceed `maxBytes` |
+| `'close'` | Closes the session when an event arrives and queued bytes already exceed `maxBytes` |
 | `'drop'`  | Silently drops the event but keeps the session open     |
 
 When backpressure triggers, `session.push()` returns `false`.
@@ -500,6 +552,7 @@ export type {
     SubscriptionInfo,
     FilterOptions,
     BackpressureOptions,
+    SessionOptions,
     Replayer,
     ReplayEntry,
 };

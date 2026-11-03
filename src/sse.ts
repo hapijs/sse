@@ -13,7 +13,7 @@ import Joi from 'joi';
 import { createRequire } from 'node:module';
 import Zlib from 'node:zlib';
 
-import { Session, readLastEventId } from './session.js';
+import { SESSION_DEFAULTS, Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
 import { SubscriptionRegistry } from './subscription.js';
 
@@ -113,12 +113,6 @@ const COMPLETION_DEFAULTS: CompletionCacheOptions = {
     expiresIn: 5 * 60 * 1000,
 };
 
-const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure' | 'completion'>> = {
-    keepAlive: { interval: 15_000 },
-    retry: 2000,
-    headers: {},
-};
-
 const keepAliveSchema = Joi.alternatives().try(
     Joi.object({ interval: Joi.number().integer().positive().required() }),
     Joi.valid(false),
@@ -191,7 +185,7 @@ export const SsePlugin: NamedPlugin<SsePluginOptions> = {
     register: (server, options) => {
         Joi.attempt(options, pluginOptionsSchema, 'Invalid @hapi/sse plugin options:');
 
-        const config = { ...defaults, ...options };
+        const config = { ...SESSION_DEFAULTS, ...options };
         const registry = new SubscriptionRegistry();
         const hooks = options.hooks;
 

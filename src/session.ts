@@ -11,12 +11,18 @@ export interface BackpressureOptions {
 
 export interface SessionOptions {
     request: Request;
-    retry: number | null;
-    keepAlive: { interval: number } | false;
-    headers: Record<string, string>;
+    retry?: number | null;
+    keepAlive?: { interval: number } | false;
+    headers?: Record<string, string>;
     backpressure?: BackpressureOptions;
     maxDuration?: number;
 }
+
+export const SESSION_DEFAULTS: Required<Pick<SessionOptions, 'retry' | 'keepAlive' | 'headers'>> = {
+    retry: 2000,
+    keepAlive: { interval: 15_000 },
+    headers: {},
+};
 
 export const readLastEventId = (request: Request): string => {
     const raw = request.headers['last-event-id'];
@@ -59,9 +65,10 @@ export class Session {
         this.connectedAt = Date.now();
         this.lastEventId = readLastEventId(options.request);
         this.#buffer = new EventBuffer();
-        this.#retry = options.retry;
-        this.#keepAlive = options.keepAlive;
-        this.#headers = options.headers;
+        // `null` disables retry, so only an absent value takes the default.
+        this.#retry = options.retry === undefined ? SESSION_DEFAULTS.retry : options.retry;
+        this.#keepAlive = options.keepAlive ?? SESSION_DEFAULTS.keepAlive;
+        this.#headers = options.headers ?? SESSION_DEFAULTS.headers;
         this.#backpressure = options.backpressure;
         this.#maxDuration = options.maxDuration;
         this.#stream.once('close', () => this.close());
@@ -134,19 +141,12 @@ export class Session {
             return false;
         }
 
-        this.#buffer.push(data, event, id);
-
         if (this.#backpressure) {
-            const payload = this.#buffer.read();
+            // Counts what is already queued, so one large event to a client that is keeping up still goes out.
             const pendingBytes =
-                this.#stream.readableLength +
-                this.#stream.writableLength +
-                this.request.raw.res.writableLength +
-                Buffer.byteLength(payload, 'utf8');
+                this.#stream.readableLength + this.#stream.writableLength + this.request.raw.res.writableLength;
 
             if (pendingBytes > this.#backpressure.maxBytes) {
-                this.#buffer.clear();
-
                 if (this.#backpressure.strategy === 'close') {
                     this.close();
                 }
@@ -155,6 +155,7 @@ export class Session {
             }
         }
 
+        this.#buffer.push(data, event, id);
         this.#flush();
 
         return true;
@@ -212,7 +213,7 @@ export class Session {
         this.#stream.once('close', listener);
     }
 
-    /** @internal */
+    /** Wraps the session stream in a hapi response. Lets any handler, on any method, return the session. */
     respond(h: ResponseToolkit): ResponseObject {
         const response = h.response(this.#stream).type('text/event-stream');
 
