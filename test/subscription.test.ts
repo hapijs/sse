@@ -1,6 +1,7 @@
 import { expect, describe, it } from 'vitest';
-import { SubscriptionRegistry } from '../src/subscription.js';
+
 import { Session } from '../src/session.js';
+import { SubscriptionRegistry } from '../src/subscription.js';
 
 describe.concurrent('SubscriptionRegistry', () => {
     it('getSessionInfo returns session info', () => {
@@ -13,7 +14,7 @@ describe.concurrent('SubscriptionRegistry', () => {
         expect(info).toEqual({
             pattern: '/events',
             params: { id: '1' },
-            resolvedPath: '/events/1'
+            resolvedPath: '/events/1',
         });
     });
 
@@ -30,7 +31,7 @@ describe.concurrent('SubscriptionRegistry', () => {
         const session = new Session({
             request: {
                 headers: {},
-                raw: { req: { socket: {} }, res: { writeHead: () => {}, end: () => {} } }
+                raw: { req: { socket: {} }, res: { writeHead: () => {}, end: () => {} } },
             } as any,
             retry: null,
             keepAlive: false,
@@ -101,11 +102,11 @@ describe.concurrent('SubscriptionRegistry', () => {
         const registry = new SubscriptionRegistry();
         const session = {
             request: { auth: { credentials: {} } },
-            push: () => false // Simulate closed session or error during push
+            push: () => false, // Simulate closed session or error during push
         } as any;
 
         registry.register('/events', {
-            filter: () => ({ override: 'new-data' })
+            filter: () => ({ override: 'new-data' }),
         });
         registry.addSession('/events', session, {}, '/events');
 
@@ -116,7 +117,7 @@ describe.concurrent('SubscriptionRegistry', () => {
     it('broadcast handles failed pushes to a session', async () => {
         const registry = new SubscriptionRegistry();
         const session = {
-            push: () => false // Simulate closed session or error
+            push: () => false, // Simulate closed session or error
         } as any;
 
         registry.register('/events', {});

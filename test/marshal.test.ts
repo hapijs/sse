@@ -1,12 +1,13 @@
-import * as timers from 'node:timers/promises';
-import { expect, describe, it } from 'vitest';
-import http from 'node:http';
 import crypto from 'node:crypto';
+import http from 'node:http';
+import * as timers from 'node:timers/promises';
 import zlib from 'node:zlib';
 
 import Hapi from '@hapi/hapi';
+import { expect, describe, it } from 'vitest';
 
 import { SsePlugin } from '../src/sse.js';
+
 import type { Session } from '../src/session.js';
 
 // A browser rejects a credentialed cross-origin stream without CORS headers, which only hapi's marshal step adds.
@@ -256,23 +257,24 @@ describe.concurrent('SSE response marshalling', () => {
     it.for<[string, Hapi.ServerOptions]>([
         ['compression: false', { compression: false }],
         ['a mime override', { mime: { override: { 'text/event-stream': { compressible: false } } } }],
-    ])('sends events uncompressed when the server turns compression off with %s', async ([, serverOptions], {
-        onTestFinished,
-    }) => {
-        const server = Hapi.server({ port: 0, ...serverOptions });
-        onTestFinished(() => server.stop());
-        await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
-        server.sse.subscription('/events');
-        await server.start();
+    ])(
+        'sends events uncompressed when the server turns compression off with %s',
+        async ([, serverOptions], { onTestFinished }) => {
+            const server = Hapi.server({ port: 0, ...serverOptions });
+            onTestFinished(() => server.stop());
+            await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });
+            server.sse.subscription('/events');
+            await server.start();
 
-        const res = await receive(`http://localhost:${server.info.port}/events`, {
-            headers: { 'accept-encoding': 'gzip' },
-            until: (text) => text.includes(': ok'),
-        });
+            const res = await receive(`http://localhost:${server.info.port}/events`, {
+                headers: { 'accept-encoding': 'gzip' },
+                until: (text) => text.includes(': ok'),
+            });
 
-        expect(res.status).toBe(200);
-        expect(res.headers['content-encoding']).toBeUndefined();
-    });
+            expect(res.status).toBe(200);
+            expect(res.headers['content-encoding']).toBeUndefined();
+        },
+    );
 
     it('sends replayed events before a slow onReconnect resolves', async ({ onTestFinished }) => {
         const server = Hapi.server({ port: 0 });

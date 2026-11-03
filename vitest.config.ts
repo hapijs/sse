@@ -1,25 +1,23 @@
+import Oxc from '@hapi/oxc-plugin/vitest';
 import { defineConfig } from 'vitest/config';
 
+import type { ViteUserConfig } from 'vitest/config';
+
 export default defineConfig({
+    plugins: [Oxc()],
     test: {
         environment: 'node',
-        include: ['test/**/*.test.ts'],
+        include: ['test/**/*.ts'],
         typecheck: {
             enabled: true,
-            include: ['**/*.ts'],
+            include: ['test/**/*.ts'],
         },
         coverage: {
-            enabled: true,
             provider: 'v8',
-            include: ['src/**/*.ts'],
-            reportsDirectory: './coverage',
-            reporter: ['text', 'lcov'],
+            include: ['src/**'],
             thresholds: {
-                statements: 100,
-                branches: 100,
-                functions: 100,
-                lines: 100
+                100: true,
             },
-        }
-    }
-});
+        },
+    },
+}) as ViteUserConfig;

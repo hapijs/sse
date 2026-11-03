@@ -1,14 +1,15 @@
-import * as timers from 'node:timers/promises';
-import { expect, describe, it } from 'vitest';
 import http from 'node:http';
 import net from 'node:net';
-import { EventSource } from 'eventsource';
+import * as timers from 'node:timers/promises';
 
-import Hapi from '@hapi/hapi';
 import Boom from '@hapi/boom';
+import Hapi from '@hapi/hapi';
+import { EventSource } from 'eventsource';
+import { expect, describe, it } from 'vitest';
 
-import { SsePlugin } from '../src/sse.js';
 import { FiniteReplayer, ValidReplayer } from '../src/replayer.js';
+import { SsePlugin } from '../src/sse.js';
+
 import type { Session } from '../src/session.js';
 
 interface SseOptions {
@@ -80,6 +81,13 @@ const collectSse = (url: string, opts: SseOptions = {}): Promise<SseResult> => {
     });
 };
 
+// A fixed sleep isn't enough for the client to connect on a loaded runner, so we poll instead.
+const waitForSessions = async (server: Hapi.Server, count = 1): Promise<void> => {
+    while (server.sse.sessionCount < count) {
+        await timers.setTimeout(5);
+    }
+};
+
 describe.concurrent('SSE Plugin', () => {
     it('registers without error', async ({ onTestFinished }) => {
         const server = Hapi.server();
@@ -143,10 +151,7 @@ describe.concurrent('SSE Plugin', () => {
 
         await server.start();
 
-        const result = await collectSse(
-            `http://localhost:${server.info.port}/events`,
-            { timeout: 500 },
-        );
+        const result = await collectSse(`http://localhost:${server.info.port}/events`, { timeout: 500 });
 
         expect(result.status).toBe(403);
         expect(result.headers['content-type']).toContain('application/json');
@@ -191,7 +196,7 @@ describe.concurrent('SSE Plugin', () => {
         const port = server.info.port;
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
-        await timers.setTimeout(50);
+        await waitForSessions(server);
         await server.sse.publish('/events', { ok: true }, { event: 'msg' });
         const { status, events } = await promise;
 
@@ -305,12 +310,12 @@ describe.concurrent('SSE Plugin', () => {
                     req.destroy();
                     const idMatch = data.match(/^id:\s*(.+)$/m);
 
-                    resolve(idMatch ? idMatch[1].trim() : '');
+                    resolve(idMatch ? idMatch[1]!.trim() : '');
                 });
             });
         });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
         await server.sse.eachSession((session) => session.complete());
 
         const token = await tokenPromise;
@@ -348,7 +353,7 @@ describe.concurrent('SSE Plugin', () => {
 
                     const idMatch = data.match(/^id:\s*(.+)$/m);
 
-                    resolve(idMatch ? idMatch[1].trim() : '');
+                    resolve(idMatch ? idMatch[1]!.trim() : '');
                 });
             });
         });
@@ -466,7 +471,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'hello' }, { event: 'test' });
 
@@ -493,7 +498,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'blocked' }, { internal: { allow: false } });
 
@@ -516,7 +521,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { secret: 'data' });
 
@@ -597,7 +602,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.push({ chunk: 1 }, 'token');
                         session.push({ chunk: 2 }, 'token');
                         session.close();
@@ -631,7 +636,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/a`, { maxEvents: 1 });
         const p2 = collectSse(`http://localhost:${port}/b`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.broadcast({ system: true }, { event: 'announce' });
 
@@ -705,7 +710,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.publish('/events', { msg: 'all' });
 
@@ -745,7 +750,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events/news`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events/news', { msg: 'hi' });
 
@@ -797,7 +802,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         receivedId = session.lastEventId;
                         session.push({ ok: true });
                         session.close();
@@ -830,7 +835,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         const original = session.close.bind(session);
 
                         session.close = () => {
@@ -901,7 +906,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.comment('ping');
                         session.close();
                     },
@@ -940,7 +945,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.close();
                         session.close();
                     },
@@ -967,7 +972,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.push({ before: true });
                         session.close();
                         session.push({ after: true });
@@ -1022,7 +1027,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'hi' }, { event: 'test', id: 'evt-42' });
 
@@ -1129,7 +1134,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.push({ before: true });
 
                         throw new Error('stream failed');
@@ -1173,7 +1178,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.publish('/events', { msg: 'hi' });
 
@@ -1232,7 +1237,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 3 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { event: 'msg' });
         await server.sse.publish('/events', { n: 2 }, { event: 'msg' });
@@ -1257,7 +1262,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', 'line1\nline2');
 
@@ -1278,7 +1283,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'reset' }, { event: 'test', id: '' });
 
@@ -1333,7 +1338,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         openBefore = session.isOpen;
                         session.close();
                         openAfter = session.isOpen;
@@ -1369,7 +1374,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.set('userId', 42);
                         hasKey = session.has('userId');
                         getValue = session.get('userId');
@@ -1411,7 +1416,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.eachSession((session) => {
             metaValue = session.get('role');
@@ -1437,7 +1442,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         const count = await server.sse.publish('/events', { msg: 'hi' });
 
@@ -1472,7 +1477,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         const count = await server.sse.publish('/events', { msg: 'blocked' });
 
@@ -1513,7 +1518,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const subs = server.sse.subscriptions();
 
-        expect(subs[0].activeSessions).toBe(1);
+        expect(subs[0]!.activeSessions).toBe(1);
 
         await server.sse.publish('/events', { done: true });
 
@@ -1534,7 +1539,7 @@ describe.concurrent('SSE Plugin', () => {
         const pNews = collectSse(`http://localhost:${port}/events/news`, { maxEvents: 1, timeout: 500 });
         const pSport = collectSse(`http://localhost:${port}/events/sport`, { timeout: 500 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.publish('/events/news', { msg: 'breaking' }, { matchMode: 'literal' });
 
@@ -1557,7 +1562,7 @@ describe.concurrent('SSE Plugin', () => {
         const pNews = collectSse(`http://localhost:${port}/events/news`, { maxEvents: 1 });
         const pSport = collectSse(`http://localhost:${port}/events/sport`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.publish('/events/news', { msg: 'all' });
 
@@ -1588,7 +1593,7 @@ describe.concurrent('SSE Plugin', () => {
         // Connect first client to register the subscription route
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 3 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { event: 'msg', id: '1' });
         await server.sse.publish('/events', { n: 2 }, { event: 'msg', id: '2' });
@@ -1620,7 +1625,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 2 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { event: 'msg', id: '1' });
         await server.sse.publish('/events', { n: 2 }, { event: 'msg', id: '2' });
@@ -1659,7 +1664,7 @@ describe.concurrent('SSE Plugin', () => {
         // Publish first to populate the replayer
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { id: '1' });
 
@@ -1783,7 +1788,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'hi' });
 
@@ -1819,7 +1824,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'ok' });
 
@@ -1850,7 +1855,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         sessionRef = session;
 
                         // Flood the session with data to exceed maxBytes
@@ -1894,7 +1899,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         const bigData = 'x'.repeat(100);
 
                         pushResults.push(session.push({ first: true }));
@@ -1946,7 +1951,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/a`, { maxEvents: 1 });
         const p2 = collectSse(`http://localhost:${port}/b`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         const count = await server.sse.broadcast({ system: true });
 
@@ -1971,7 +1976,7 @@ describe.concurrent('SSE Plugin', () => {
         const pA = collectSse(`http://localhost:${port}/a`, { timeout: 500 });
         const pB = collectSse(`http://localhost:${port}/b`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         expect(server.sse.sessionCount).toBe(2);
 
@@ -2046,7 +2051,7 @@ describe.concurrent('SSE Plugin', () => {
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
         const p3 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 3);
 
         expect(server.sse.sessionCount).toBe(3);
 
@@ -2104,7 +2109,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'allowed' }, { internal: { allow: true } });
 
@@ -2148,7 +2153,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', 'line1\r\nline2\rline3');
 
@@ -2181,7 +2186,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.close();
                         session.comment('should not throw');
                     },
@@ -2212,7 +2217,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { original: true }, { event: 'custom', id: 'evt-99' });
 
@@ -2315,7 +2320,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (request, session) => {
+                    stream: (_request, session) => {
                         requestPath = session.request.path;
                         hasAuth = 'auth' in session.request;
                         session.push({ ok: true });
@@ -2401,7 +2406,7 @@ describe.concurrent('SSE Plugin', () => {
         // Publish events via first client
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { id: '1' });
 
@@ -2436,7 +2441,7 @@ describe.concurrent('SSE Plugin', () => {
         // So autoId is mainly useful when manually calling replayer.record()
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { id: 'a' });
 
@@ -2519,7 +2524,7 @@ describe.concurrent('SSE Plugin', () => {
         // New connection should still work
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         expect(server.sse.sessionCount).toBe(1);
 
@@ -2574,7 +2579,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events/news`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         const count = await server.sse.publish('/events/sport', { msg: 'hi' }, { matchMode: 'literal' });
 
@@ -2597,7 +2602,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         const count = await server.sse.publish('/events', { original: true });
 
@@ -2626,7 +2631,7 @@ describe.concurrent('SSE Plugin', () => {
         // Populate replayer
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { source: 'replay' }, { event: 'msg', id: '1' });
 
@@ -2662,7 +2667,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         const bigData = 'x'.repeat(200);
 
                         session.push(bigData);
@@ -2712,7 +2717,7 @@ describe.concurrent('SSE Plugin', () => {
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
         const p3 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1, timeout: 500 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 3);
 
         const count = await server.sse.publish('/events', { msg: 'partial' });
 
@@ -2748,7 +2753,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'despite hook error' });
 
@@ -2840,7 +2845,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         expect(server.sse.sessionCount).toBe(1);
 
@@ -2863,7 +2868,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         timestamp = session.connectedAt;
                         session.close();
                     },
@@ -2941,7 +2946,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.broadcast({ msg: 'hi' });
 
@@ -3017,7 +3022,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.push({ ok: true });
                         session.close();
                     },
@@ -3055,7 +3060,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         session.push({ ok: true });
                         session.close();
                     },
@@ -3161,7 +3166,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.broadcast({ msg: 'hi' }, { event: 'sys', id: 'b-1' });
 
@@ -3196,7 +3201,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { msg: 'hi' }, { id: 'only-id' });
 
@@ -3281,7 +3286,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { original: true });
 
@@ -3302,7 +3307,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         value = session.get('nonexistent');
                         session.close();
                     },
@@ -3331,7 +3336,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (_request, session) => {
+                    stream: (_request, session) => {
                         result = session.delete('nonexistent');
                         session.close();
                     },
@@ -3359,7 +3364,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', null);
 
@@ -3379,7 +3384,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const promise = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', 42);
 
@@ -3420,7 +3425,7 @@ describe.concurrent('SSE Plugin', () => {
             path: '/stream',
             handler: {
                 sse: {
-                    stream: async (request, session) => {
+                    stream: (request, session) => {
                         receivedPath = request.path;
                         receivedMethod = request.method;
                         session.close();
@@ -3477,7 +3482,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 2 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }); // no id — should NOT be recorded
         await server.sse.publish('/events', { n: 2 }, { id: '1' }); // has id — should be recorded
@@ -3825,7 +3830,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { n: 1 }, { event: 'msg', id: '1' });
         await p1;
@@ -3872,7 +3877,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
         const p2 = collectSse(`http://localhost:${port}/events`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         await server.sse.eachSession((session) => {
             const id = session.get('clientId') as string;
@@ -3883,9 +3888,9 @@ describe.concurrent('SSE Plugin', () => {
         await Promise.all([p1, p2]);
 
         expect(metadata.length).toBe(2);
-        expect(metadata[0].id).not.toBe(metadata[1].id);
-        expect(metadata[0].peer).toBeUndefined();
-        expect(metadata[1].peer).toBeUndefined();
+        expect(metadata[0]!.id).not.toBe(metadata[1]!.id);
+        expect(metadata[0]!.peer).toBeUndefined();
+        expect(metadata[1]!.peer).toBeUndefined();
     });
 
     it('filter receives per-session credentials without cross-leak', async ({ onTestFinished }) => {
@@ -3909,7 +3914,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(100);
+        await waitForSessions(server, 2);
 
         await server.sse.publish('/events', { data: 'test' }, { event: 'msg' });
 
@@ -3985,7 +3990,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const publicPromise = collectSse(`http://localhost:${port}/public`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/private', { secret: 'classified' }, { event: 'leak' });
 
@@ -4039,7 +4044,7 @@ describe.concurrent('SSE Plugin', () => {
         const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
         const p2 = collectSse(`http://localhost:${port}/events`, { timeout: 500 });
 
-        await timers.setTimeout(100);
+        await waitForSessions(server, 2);
 
         expect(server.sse.sessionCount).toBe(2);
 
@@ -4061,7 +4066,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const p1 = collectSse(`http://localhost:${port}/events`, { timeout: 200 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         expect(server.sse.sessionCount).toBe(1);
 
@@ -4070,7 +4075,7 @@ describe.concurrent('SSE Plugin', () => {
 
         const p2 = collectSse(`http://localhost:${port}/events`, { maxEvents: 1 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server);
 
         await server.sse.publish('/events', { ok: true });
 
@@ -4093,7 +4098,7 @@ describe.concurrent('SSE Plugin', () => {
         const pa = collectSse(`http://localhost:${port}/a`, { timeout: 300 });
         const pb = collectSse(`http://localhost:${port}/b`, { timeout: 300 });
 
-        await timers.setTimeout(50);
+        await waitForSessions(server, 2);
 
         expect(server.sse.sessionCount).toBe(2);
 
@@ -4163,13 +4168,9 @@ describe.concurrent('SSE Plugin', () => {
 
     // --- Remaining gaps (external layer) ---
 
-    it.todo(
-        'EXTERNAL: Origin header validation — implement via Hapi onPreAuth extension or reverse proxy',
-    );
+    it.todo('EXTERNAL: Origin header validation — implement via Hapi onPreAuth extension or reverse proxy');
 
-    it.todo(
-        'EXTERNAL: stream replacement guard — implement via session-aware auth middleware',
-    );
+    it.todo('EXTERNAL: stream replacement guard — implement via session-aware auth middleware');
 
     describe.concurrent('Edge Cases', () => {
         it('handles auth configurations in subscription()', async ({ onTestFinished }) => {
@@ -4360,9 +4361,9 @@ describe.concurrent('SSE Plugin', () => {
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin });
 
-            expect(() =>
-                server.sse.subscription('/events', { filter: 'nope' as never }),
-            ).toThrow(/Invalid @hapi\/sse subscription config for "\/events".*filter/i);
+            expect(() => server.sse.subscription('/events', { filter: 'nope' as never })).toThrow(
+                /Invalid @hapi\/sse subscription config for "\/events".*filter/i,
+            );
         });
 
         it('rejects subscription with non-positive maxSessions', async ({ onTestFinished }) => {
@@ -4370,9 +4371,7 @@ describe.concurrent('SSE Plugin', () => {
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin });
 
-            expect(() =>
-                server.sse.subscription('/events', { maxSessions: 0 }),
-            ).toThrow(/maxSessions/);
+            expect(() => server.sse.subscription('/events', { maxSessions: 0 })).toThrow(/maxSessions/);
         });
 
         it('rejects subscription with non-positive maxDuration', async ({ onTestFinished }) => {
@@ -4380,9 +4379,7 @@ describe.concurrent('SSE Plugin', () => {
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin });
 
-            expect(() =>
-                server.sse.subscription('/events', { maxDuration: -1 }),
-            ).toThrow(/maxDuration/);
+            expect(() => server.sse.subscription('/events', { maxDuration: -1 })).toThrow(/maxDuration/);
         });
 
         it('rejects subscription with replayer missing record/replay', async ({ onTestFinished }) => {
@@ -4390,9 +4387,9 @@ describe.concurrent('SSE Plugin', () => {
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin });
 
-            expect(() =>
-                server.sse.subscription('/events', { replay: { record: () => {} } as never }),
-            ).toThrow(/replay/i);
+            expect(() => server.sse.subscription('/events', { replay: { record: () => {} } as never })).toThrow(
+                /replay/i,
+            );
         });
 
         it('rejects unknown subscription config key', async ({ onTestFinished }) => {
@@ -4400,9 +4397,9 @@ describe.concurrent('SSE Plugin', () => {
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin });
 
-            expect(() =>
-                server.sse.subscription('/events', { onUnsubcsribe: () => {} } as never),
-            ).toThrow(/onUnsubcsribe/);
+            expect(() => server.sse.subscription('/events', { onUnsubcsribe: () => {} } as never)).toThrow(
+                /onUnsubcsribe/,
+            );
         });
 
         it('rejects sse handler decoration missing stream', async ({ onTestFinished }) => {
@@ -4555,9 +4552,7 @@ describe.concurrent('SSE Plugin', () => {
             expect(logged).toEqual(['store down']);
         });
 
-        it('rejects a publish whose id contains a null character before recording it', async ({
-            onTestFinished,
-        }) => {
+        it('rejects a publish whose id contains a null character before recording it', async ({ onTestFinished }) => {
             const server = Hapi.server({ port: 0 });
             onTestFinished(() => server.stop());
             await server.register({ plugin: SsePlugin, options: { retry: null, keepAlive: false } });

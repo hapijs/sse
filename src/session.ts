@@ -1,8 +1,9 @@
-import type { Request, ResponseObject, ResponseToolkit } from '@hapi/hapi';
 import { randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 
 import { EventBuffer } from './event-buffer.js';
+
+import type { Request, ResponseObject, ResponseToolkit } from '@hapi/hapi';
 
 export interface BackpressureOptions {
     maxBytes: number;
@@ -14,8 +15,8 @@ export interface SessionOptions {
     retry?: number | null;
     keepAlive?: { interval: number } | false;
     headers?: Record<string, string>;
-    backpressure?: BackpressureOptions;
-    maxDuration?: number;
+    backpressure?: BackpressureOptions | undefined;
+    maxDuration?: number | undefined;
 }
 
 export const SESSION_DEFAULTS: Required<Pick<SessionOptions, 'retry' | 'keepAlive' | 'headers'>> = {

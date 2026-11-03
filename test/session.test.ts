@@ -1,6 +1,8 @@
-import Hapi from '@hapi/hapi';
 import * as timers from 'node:timers/promises';
+
+import Hapi from '@hapi/hapi';
 import { afterEach, expect, describe, it, vi } from 'vitest';
+
 import { Session } from '../src/session.js';
 
 describe.concurrent('Session', () => {
@@ -27,7 +29,7 @@ describe.concurrent('Session', () => {
         await timers.setTimeout(20);
     });
 
-    it('cleans up keep-alive timer when the session is closed', async () => {
+    it('cleans up keep-alive timer when the session is closed', () => {
         const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
@@ -56,7 +58,7 @@ describe.concurrent('Session', () => {
 
         const stored: string[] = [];
         const completionStore = {
-            set: async (id: string) => {
+            set: (id: string) => {
                 stored.push(id);
             },
         };
@@ -104,7 +106,7 @@ describe.concurrent('Session', () => {
     it('complete() is a no-op when the session was never initialized', async () => {
         const stored: string[] = [];
         const completionStore = {
-            set: async (id: string) => {
+            set: (id: string) => {
                 stored.push(id);
             },
         };
@@ -129,7 +131,7 @@ describe.concurrent('Session', () => {
     it('complete() is a no-op when the session is already closed', async () => {
         const stored: string[] = [];
         const completionStore = {
-            set: async (id: string) => {
+            set: (id: string) => {
                 stored.push(id);
             },
         };
@@ -152,7 +154,7 @@ describe.concurrent('Session', () => {
         expect(stored).toEqual([]);
     });
 
-    it('uses the first event ID when the header is an array of IDs', async () => {
+    it('uses the first event ID when the header is an array of IDs', () => {
         const mockRequest = {
             headers: { 'last-event-id': ['id1', 'id2'] },
             raw: {
@@ -171,7 +173,7 @@ describe.concurrent('Session', () => {
         expect(session.lastEventId).toBe('id1');
     });
 
-    it('does not exceed backpressure maxBytes when within limit', async () => {
+    it('does not exceed backpressure maxBytes when within limit', () => {
         const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
@@ -221,7 +223,7 @@ describe.concurrent('Session', () => {
         expect(res.payload).toContain(`data: ${large}\n\n`);
     });
 
-    it('can be closed when not initialized', async () => {
+    it('can be closed when not initialized', () => {
         const mockRes = { writableLength: 0 } as any;
 
         const mockRequest = {
@@ -264,9 +266,10 @@ describe.concurrent('Session', () => {
         // To reach the 'if (data)' false branch in #flush(), we need data to be falsy.
         // Since all public methods add data before flushing, we use a mock on EventBuffer.read.
         const { EventBuffer } = await import('../src/event-buffer.js');
-        const readSpy = (await import('vitest')).vi.spyOn(EventBuffer.prototype, 'read')
+        const readSpy = (await import('vitest')).vi
+            .spyOn(EventBuffer.prototype, 'read')
             .mockReturnValueOnce('ok') // for initialize
-            .mockReturnValueOnce('');   // for keep-alive
+            .mockReturnValueOnce(''); // for keep-alive
 
         session.initialize();
 

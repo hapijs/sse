@@ -1,3 +1,13 @@
+import { createRequire } from 'node:module';
+import Zlib from 'node:zlib';
+
+import Boom from '@hapi/boom';
+import * as Hoek from '@hapi/hoek';
+import Joi from 'joi';
+
+import { SESSION_DEFAULTS, Session, readLastEventId } from './session.js';
+import { SubscriptionRegistry } from './subscription.js';
+
 import type {
     HandlerDecorationMethod,
     NamedPlugin,
@@ -7,15 +17,7 @@ import type {
     RouteOptions,
     Lifecycle,
 } from '@hapi/hapi';
-import Boom from '@hapi/boom';
-import * as Hoek from '@hapi/hoek';
-import Joi from 'joi';
-import { createRequire } from 'node:module';
-import Zlib from 'node:zlib';
-
-import { SESSION_DEFAULTS, Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
-import { SubscriptionRegistry } from './subscription.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 import type { SubscriptionConfig, SubscriptionInfo, FilterOptions } from './subscription.js';

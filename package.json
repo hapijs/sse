@@ -1,49 +1,62 @@
 {
-  "name": "@hapi/sse",
-  "version": "1.3.0",
-  "description": "Server-Sent Events plugin for hapi",
-  "types": "./dist/index.d.mts",
-  "exports": {
-    ".": "./dist/index.mjs",
-    "./package.json": "./package.json"
-  },
-  "type": "module",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE.md"
-  ],
-  "scripts": {
-    "test": "vitest run",
-    "lint": "eslint .",
-    "build": "tsdown",
-    "prepare": "node --run build"
-  },
-  "keywords": [
-    "hapi",
-    "plugin",
-    "sse",
-    "server-sent events"
-  ],
-  "author": "Danilo Alonso",
-  "license": "BSD-3-Clause",
-  "peerDependencies": {
-    "@hapi/boom": "^10.0.0",
-    "@hapi/hapi": "^21.0.0"
-  },
-  "devDependencies": {
-    "@hapi/boom": "^10.0.1",
-    "@hapi/hapi": "^21.4.7",
-    "@types/node": "^22.19.15",
-    "@vitest/coverage-v8": "^4.1.0",
-    "eventsource": "^4.1.0",
-    "tsdown": "^0.21.4",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.57.1",
-    "vitest": "^4.1.0"
-  },
-  "dependencies": {
-    "@hapi/hoek": "^11.0.7",
-    "joi": "^18.1.2"
-  }
+    "name": "@hapi/sse",
+    "version": "1.3.0",
+    "description": "Server-Sent Events plugin for hapi",
+    "keywords": [
+        "hapi",
+        "plugin",
+        "server-sent events",
+        "sse"
+    ],
+    "license": "BSD-3-Clause",
+    "author": "Danilo Alonso",
+    "repository": {
+        "type": "git",
+        "url": "git://github.com/hapijs/sse.git"
+    },
+    "files": [
+        "dist",
+        "API.md"
+    ],
+    "type": "module",
+    "types": "./dist/index.d.mts",
+    "exports": {
+        ".": "./dist/index.mjs",
+        "./package.json": "./package.json"
+    },
+    "scripts": {
+        "prepare": "node --run build",
+        "test": "vitest run --coverage",
+        "typecheck": "tsc --noEmit",
+        "lint": "oxlint",
+        "lint:fix": "oxlint --fix",
+        "fmt": "oxfmt --check",
+        "fmt:fix": "oxfmt",
+        "build": "tsdown"
+    },
+    "dependencies": {
+        "@hapi/hoek": "^11.0.7",
+        "joi": "^18.1.2"
+    },
+    "devDependencies": {
+        "@hapi/boom": "^10.0.1",
+        "@hapi/catbox-memory": "^6.0.2",
+        "@hapi/hapi": "^21.4.7",
+        "@hapi/oxc-plugin": "^1.1.1",
+        "@types/node": "^22.19.15",
+        "@vitest/coverage-v8": "^5.1.0",
+        "eventsource": "^4.1.0",
+        "oxfmt": "^0.75.0",
+        "oxlint": "^1.90.0",
+        "tsdown": "^0.23.4",
+        "typescript": "^7.0.2",
+        "vitest": "^5.1.0"
+    },
+    "peerDependencies": {
+        "@hapi/boom": "^10.0.0",
+        "@hapi/hapi": "^21.0.0"
+    },
+    "engines": {
+        "node": ">=22"
+    }
 }
