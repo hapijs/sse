@@ -98,19 +98,19 @@ server.sse.subscription('/chat/{room}', {
 
 **Config options:**
 
-| Option          | Type                                                               | Description                                                                                     |
-| --------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `auth`          | `RouteOptions['auth']`                                             | hapi auth config for the route                                                                  |
-| `retry`         | `number \| null`                                                   | Override plugin-level retry                                                                     |
-| `keepAlive`     | `{ interval: number } \| false`                                    | Override plugin-level keep-alive                                                                |
-| `refuse`        | `(request) => boolean \| Promise<boolean>`                         | Server-state predicate. Runs before the session is created. Returning `true` responds with `204 No Content`, telling the EventSource not to reconnect. |
-| `filter`        | `(path, message, opts) => boolean \| { override } \| Promise<...>` | Per-session delivery filter                                                                     |
-| `onSubscribe`   | `(session, path, params) => void \| Promise<void>`                 | Fires before SSE headers are sent. Throwing a Boom error returns that HTTP error to the client. Closing the session responds with `204 No Content`. |
-| `onUnsubscribe` | `(session, path, params) => void`                                  | Fires on client disconnect                                                                      |
-| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present, after replay. Skipped when replay fails. Runs without delaying the response. Errors close the session gracefully. |
+| Option          | Type                                                               | Description                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`          | `RouteOptions['auth']`                                             | hapi auth config for the route                                                                                                                                                                                                                                                                                                                                                                                            |
+| `retry`         | `number \| null`                                                   | Override plugin-level retry                                                                                                                                                                                                                                                                                                                                                                                               |
+| `keepAlive`     | `{ interval: number } \| false`                                    | Override plugin-level keep-alive                                                                                                                                                                                                                                                                                                                                                                                          |
+| `refuse`        | `(request) => boolean \| Promise<boolean>`                         | Server-state predicate. Runs before the session is created. Returning `true` responds with `204 No Content`, telling the EventSource not to reconnect.                                                                                                                                                                                                                                                                    |
+| `filter`        | `(path, message, opts) => boolean \| { override } \| Promise<...>` | Per-session delivery filter                                                                                                                                                                                                                                                                                                                                                                                               |
+| `onSubscribe`   | `(session, path, params) => void \| Promise<void>`                 | Fires before SSE headers are sent. Throwing a Boom error returns that HTTP error to the client. Closing the session responds with `204 No Content`.                                                                                                                                                                                                                                                                       |
+| `onUnsubscribe` | `(session, path, params) => void`                                  | Fires on client disconnect                                                                                                                                                                                                                                                                                                                                                                                                |
+| `onReconnect`   | `(session, path, params) => void \| Promise<void>`                 | Fires when `Last-Event-ID` is present, after replay. Skipped when replay fails. Runs without delaying the response. Errors close the session gracefully.                                                                                                                                                                                                                                                                  |
 | `replay`        | `Replayer`                                                         | Replay provider for automatic reconnection replay. If replay fails (`replay()` throws or returns an entry with an invalid `id`), the error is reported with `request.log()` (tags `sse`, `replay`, `error`), the stream ends, and the client reconnects after `retry`. A replayer that keeps returning an invalid entry fails every reconnect until that entry is gone; the built-in replayers' `record()` throws on one. |
-| `maxSessions`   | `number`                                                           | Maximum concurrent sessions for this subscription. Excess connections receive a 503 response.   |
-| `maxDuration`   | `number`                                                           | Maximum connection lifetime in ms. Sessions are closed after this duration (with ±10% jitter to prevent thundering herd reconnections). A `: session expired` comment is sent before closing. |
+| `maxSessions`   | `number`                                                           | Maximum concurrent sessions for this subscription. Excess connections receive a 503 response.                                                                                                                                                                                                                                                                                                                             |
+| `maxDuration`   | `number`                                                           | Maximum connection lifetime in ms. Sessions are closed after this duration (with ±10% jitter to prevent thundering herd reconnections). A `: session expired` comment is sent before closing.                                                                                                                                                                                                                             |
 
 ### `server.sse.publish(path, data, opts?)`
 
@@ -272,9 +272,9 @@ await server.register({
     plugin: SsePlugin,
     options: {
         completion: {
-            cache: 'redis-cache',          // share completion state across processes
+            cache: 'redis-cache', // share completion state across processes
             segment: 'sse-completions',
-            expiresIn: 10 * 60 * 1000,     // 10 minutes
+            expiresIn: 10 * 60 * 1000, // 10 minutes
         },
     },
 });
@@ -318,22 +318,23 @@ server.route({
 
 **Handler options:**
 
-| Option         | Type                                          | Description                                                                       |
-| -------------- | --------------------------------------------- | --------------------------------------------------------------------------------- |
+| Option         | Type                                          | Description                                                                                                           |
+| -------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `stream`       | `(request, session) => void \| Promise<void>` | Required. Called once the session is set up; the response is sent while it runs. Errors close the session gracefully. |
-| `retry`        | `number \| null`                              | Override plugin-level retry (default: inherits from plugin)                       |
-| `keepAlive`    | `{ interval: number } \| false`               | Override plugin-level keep-alive (default: inherits from plugin)                  |
-| `headers`      | `Record<string, string>`                      | Override plugin-level headers (default: inherits from plugin)                     |
-| `backpressure` | `BackpressureOptions`                         | Override plugin-level backpressure (default: inherits from plugin)                |
-| `maxDuration`  | `number`                                      | Maximum connection lifetime in ms (with ±10% jitter). Sends a comment before closing. |
+| `retry`        | `number \| null`                              | Override plugin-level retry (default: inherits from plugin)                                                           |
+| `keepAlive`    | `{ interval: number } \| false`               | Override plugin-level keep-alive (default: inherits from plugin)                                                      |
+| `headers`      | `Record<string, string>`                      | Override plugin-level headers (default: inherits from plugin)                                                         |
+| `backpressure` | `BackpressureOptions`                         | Override plugin-level backpressure (default: inherits from plugin)                                                    |
+| `maxDuration`  | `number`                                      | Maximum connection lifetime in ms (with ±10% jitter). Sends a comment before closing.                                 |
 
 ## Standalone Sessions
 
 A `Session` needs only a request, so any handler on any method can return one, with or without the plugin registered. Use this when the handler chooses between SSE and another response after it has started working. The decorator and subscriptions cannot do that because they commit to a stream first.
 
 ```typescript
-import { Session } from '@hapi/sse';
 import Zlib from 'node:zlib';
+
+import { Session } from '@hapi/sse';
 
 server.route({
     method: 'POST',
@@ -368,14 +369,14 @@ Create the session on the branch that streams, then call `initialize()` before `
 
 **Session options:**
 
-| Option         | Type                            | Description                                                                 |
-| -------------- | ------------------------------- | --------------------------------------------------------------------------- |
-| `request`      | `Request`                       | Required. The hapi request.                                                 |
+| Option         | Type                            | Description                                                                                                                                                 |
+| -------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`      | `Request`                       | Required. The hapi request.                                                                                                                                 |
 | `retry`        | `number \| null`                | Client reconnect delay in ms (default: `2000`). `null` sends no `retry` field. The 1000 ms floor applies only to plugin, subscription, and handler options. |
-| `keepAlive`    | `{ interval: number } \| false` | Comment interval, started by `initialize()` (default: `{ interval: 15_000 }`). |
-| `headers`      | `Record<string, string>`        | Extra response headers (default: `{}`).                                     |
-| `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). A session without this has no limit.                                          |
-| `maxDuration`  | `number`                        | Maximum connection lifetime in ms (with ±10% jitter).                       |
+| `keepAlive`    | `{ interval: number } \| false` | Comment interval, started by `initialize()` (default: `{ interval: 15_000 }`).                                                                              |
+| `headers`      | `Record<string, string>`        | Extra response headers (default: `{}`).                                                                                                                     |
+| `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). A session without this has no limit.                                                                                     |
+| `maxDuration`  | `number`                        | Maximum connection lifetime in ms (with ±10% jitter).                                                                                                       |
 
 ## Event Replay
 
@@ -465,10 +466,10 @@ server.route({
 
 **Strategies:**
 
-| Strategy  | Behavior                                                |
-| --------- | ------------------------------------------------------- |
+| Strategy  | Behavior                                                                            |
+| --------- | ----------------------------------------------------------------------------------- |
 | `'close'` | Closes the session when an event arrives and queued bytes already exceed `maxBytes` |
-| `'drop'`  | Silently drops the event but keeps the session open     |
+| `'drop'`  | Silently drops the event but keeps the session open                                 |
 
 When backpressure triggers, `session.push()` returns `false`.
 

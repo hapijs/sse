@@ -70,7 +70,7 @@ export class EventBuffer {
             this.event(event);
         }
 
-        if (id != null) {
+        if (id !== undefined && id !== null) {
             this.id(id);
         }
 

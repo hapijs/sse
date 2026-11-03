@@ -1,7 +1,7 @@
-import type { Request, RouteOptions } from '@hapi/hapi';
-
 import { assertEventId } from './event-buffer.js';
 import { Session } from './session.js';
+
+import type { Request, RouteOptions } from '@hapi/hapi';
 import type { Replayer } from './replayer.js';
 
 export interface FilterOptions {
@@ -83,7 +83,7 @@ export class SubscriptionRegistry {
                 const params: Record<string, string> = {};
 
                 for (let i = 0; i < sub.paramNames.length; i++) {
-                    params[sub.paramNames[i]] = match[i + 1];
+                    params[sub.paramNames[i]!] = match[i + 1]!;
                 }
 
                 return { pattern: sub.pattern, params, config: sub.config };
@@ -206,6 +206,7 @@ export class SubscriptionRegistry {
         return delivered;
     }
 
+    // oxlint-disable-next-line require-await
     async broadcast(data: unknown, opts?: { event?: string; id?: string }): Promise<number> {
         assertEventId(opts?.id);
 

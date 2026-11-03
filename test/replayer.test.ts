@@ -1,4 +1,5 @@
 import * as timers from 'node:timers/promises';
+
 import { expect, describe, it } from 'vitest';
 
 import { FiniteReplayer, ValidReplayer } from '../src/replayer.js';
@@ -56,8 +57,8 @@ describe.concurrent('FiniteReplayer', () => {
         const entries = replayer.replay('0');
 
         expect(entries.length).toBe(3);
-        expect(entries[0].id).toBe('2');
-        expect(entries[2].id).toBe('4');
+        expect(entries[0]!.id).toBe('2');
+        expect(entries[2]!.id).toBe('4');
     });
 
     it('preserves event field', () => {
@@ -67,7 +68,7 @@ describe.concurrent('FiniteReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].event).toBe('chat');
+        expect(entries[0]!.event).toBe('chat');
     });
 
     it('autoId generates sequential ids when entry id is empty', () => {
@@ -78,8 +79,8 @@ describe.concurrent('FiniteReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].id).toBe('1');
-        expect(entries[1].id).toBe('2');
+        expect(entries[0]!.id).toBe('1');
+        expect(entries[1]!.id).toBe('2');
     });
 
     it('id is not generated when autoId is false and id is missing', () => {
@@ -89,7 +90,7 @@ describe.concurrent('FiniteReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].id).toBeUndefined();
+        expect(entries[0]!.id).toBeUndefined();
     });
 
     it('autoId does not overwrite explicit ids', () => {
@@ -99,7 +100,7 @@ describe.concurrent('FiniteReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].id).toBe('custom-1');
+        expect(entries[0]!.id).toBe('custom-1');
     });
 
     it('returns copy of buffer to prevent mutation', () => {
@@ -163,7 +164,7 @@ describe.concurrent('ValidReplayer', () => {
         expect(entries.length).toBe(0);
     });
 
-    it('preserves non-expired entries', async ({ onTestFinished }) => {
+    it('preserves non-expired entries', ({ onTestFinished }) => {
         const replayer = new ValidReplayer({ ttl: 5000 });
         onTestFinished(() => replayer.stop());
 
@@ -183,8 +184,8 @@ describe.concurrent('ValidReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].id).toBe('1');
-        expect(entries[1].id).toBe('2');
+        expect(entries[0]!.id).toBe('1');
+        expect(entries[1]!.id).toBe('2');
     });
 
     it('id is not generated when autoId is false and id is missing', ({ onTestFinished }) => {
@@ -195,7 +196,7 @@ describe.concurrent('ValidReplayer', () => {
 
         const entries = replayer.replay('0');
 
-        expect(entries[0].id).toBeUndefined();
+        expect(entries[0]!.id).toBeUndefined();
     });
 
     it('stop() clears the timer', () => {

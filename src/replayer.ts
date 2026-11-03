@@ -4,7 +4,7 @@ import { assertEventId } from './event-buffer.js';
 
 export interface ReplayEntry {
     data: unknown;
-    event?: string;
+    event?: string | undefined;
     id: string;
 }
 
@@ -129,7 +129,7 @@ export class ValidReplayer implements Replayer {
     #gc(): void {
         const now = Date.now();
 
-        while (this.#buffer.length > 0 && this.#buffer[0].expiresAt <= now) {
+        while (this.#buffer.length > 0 && this.#buffer[0]!.expiresAt <= now) {
             this.#buffer.shift();
         }
     }
