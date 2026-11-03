@@ -364,17 +364,17 @@ server.route({
 });
 ```
 
-Create the session on the branch that streams, then call `initialize()` before `push()`. Replay needs a subscription, so it does not apply here.
+Create the session on the branch that streams, then call `initialize()` before `push()`. Replay needs a subscription, so it does not apply here. Plugin-level `retry`, `keepAlive`, `headers` and `backpressure` never reach a standalone session; omitted options take the built-in defaults below.
 
 **Session options:**
 
 | Option         | Type                            | Description                                                                 |
 | -------------- | ------------------------------- | --------------------------------------------------------------------------- |
 | `request`      | `Request`                       | Required. The hapi request.                                                 |
-| `retry`        | `number \| null`                | Client reconnect delay in ms (default: `2000`). `null` sends no `retry` field. The 1000 ms floor applies only to plugin and handler options. |
+| `retry`        | `number \| null`                | Client reconnect delay in ms (default: `2000`). `null` sends no `retry` field. The 1000 ms floor applies only to plugin, subscription, and handler options. |
 | `keepAlive`    | `{ interval: number } \| false` | Comment interval, started by `initialize()` (default: `{ interval: 15_000 }`). |
 | `headers`      | `Record<string, string>`        | Extra response headers (default: `{}`).                                     |
-| `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). Plugin-level settings do not apply here, so a session without this has no limit.                                          |
+| `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). A session without this has no limit.                                          |
 | `maxDuration`  | `number`                        | Maximum connection lifetime in ms (with ±10% jitter).                       |
 
 ## Event Replay

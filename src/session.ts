@@ -11,11 +11,8 @@ export interface BackpressureOptions {
 
 export interface SessionOptions {
     request: Request;
-    /** Reconnect delay sent to the client, in ms. `null` sends none. Defaults to 2000. */
     retry?: number | null;
-    /** Comment-frame interval that keeps proxies from closing an idle stream. Defaults to 15s. */
     keepAlive?: { interval: number } | false;
-    /** Extra response headers. */
     headers?: Record<string, string>;
     backpressure?: BackpressureOptions;
     maxDuration?: number;
