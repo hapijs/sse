@@ -1,3 +1,4 @@
+import Hapi from '@hapi/hapi';
 import * as timers from 'node:timers/promises';
 import { expect, describe, it } from 'vitest';
 import { Session } from '../src/session.js';
@@ -252,5 +253,100 @@ describe.concurrent('Session', () => {
         // The second call (keep-alive) should have returned '' and thus not called write
         // But initialize called write.
         readSpy.mockRestore();
+    });
+});
+
+// A handler that picks JSON or SSE after doing work must be able to return the session itself:
+// the plugin's decoration and subscriptions commit to a stream before any handler code runs.
+describe('Session.respond()', () => {
+    const decidingLate = () => {
+        const server = Hapi.server();
+
+        server.route({
+            method: 'POST',
+            path: '/events',
+            handler: async (request, h) => {
+                const { stream } = request.payload as { stream: boolean };
+
+                await Promise.resolve();
+
+                if (!stream) {
+                    return h.response({ json: true }).code(201);
+                }
+
+                const session = new Session({ request });
+
+                session.initialize();
+                session.push({ n: 1 });
+                session.close();
+
+                return session.respond(h);
+            },
+        });
+
+        return server;
+    };
+
+    it('streams from a POST handler with the plugin unregistered, using the plugin defaults', async () => {
+        const res = await decidingLate().inject({ method: 'POST', url: '/events', payload: { stream: true } });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-type']).toBe('text/event-stream');
+        expect(res.headers['cache-control']).toBe('no-cache');
+        expect(res.payload).toContain('retry: 2000\n');
+        expect(res.payload).toContain('data: {"n":1}\n\n');
+    });
+
+    it('leaves the handler free to answer with anything else', async () => {
+        const res = await decidingLate().inject({ method: 'POST', url: '/events', payload: { stream: false } });
+
+        expect(res.statusCode).toBe(201);
+        expect(res.result).toEqual({ json: true });
+    });
+
+    it('sends no retry field when retry is null', async () => {
+        const server = Hapi.server();
+
+        server.route({
+            method: 'GET',
+            path: '/events',
+            handler: (request, h) => {
+                const session = new Session({ request, retry: null });
+
+                session.initialize();
+                session.close();
+
+                return session.respond(h);
+            },
+        });
+
+        const res = await server.inject('/events');
+
+        expect(res.payload).not.toContain('retry:');
+    });
+
+    it('delivers one event larger than maxBytes when nothing is queued', async () => {
+        const server = Hapi.server();
+        const large = 'x'.repeat(4096);
+        const accepted: boolean[] = [];
+
+        server.route({
+            method: 'POST',
+            path: '/events',
+            handler: (request, h) => {
+                const session = new Session({ request, backpressure: { maxBytes: 1024, strategy: 'close' } });
+
+                session.initialize();
+                accepted.push(session.push(large), session.push('queued behind the large event'));
+                session.close();
+
+                return session.respond(h);
+            },
+        });
+
+        const res = await server.inject({ method: 'POST', url: '/events' });
+
+        expect(accepted).toEqual([true, false]);
+        expect(res.payload).toContain(`data: ${large}\n\n`);
     });
 });

@@ -13,7 +13,7 @@ import Joi from 'joi';
 import { createRequire } from 'node:module';
 import Zlib from 'node:zlib';
 
-import { Session, readLastEventId } from './session.js';
+import { SESSION_DEFAULTS, Session, readLastEventId } from './session.js';
 import type { BackpressureOptions } from './session.js';
 import { SubscriptionRegistry } from './subscription.js';
 
@@ -113,11 +113,7 @@ const COMPLETION_DEFAULTS: CompletionCacheOptions = {
     expiresIn: 5 * 60 * 1000,
 };
 
-const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure' | 'completion'>> = {
-    keepAlive: { interval: 15_000 },
-    retry: 2000,
-    headers: {},
-};
+const defaults: Required<Omit<SsePluginOptions, 'hooks' | 'backpressure' | 'completion'>> = SESSION_DEFAULTS;
 
 const keepAliveSchema = Joi.alternatives().try(
     Joi.object({ interval: Joi.number().integer().positive().required() }),

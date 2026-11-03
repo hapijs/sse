@@ -11,12 +11,21 @@ export interface BackpressureOptions {
 
 export interface SessionOptions {
     request: Request;
-    retry: number | null;
-    keepAlive: { interval: number } | false;
-    headers: Record<string, string>;
+    /** Reconnect delay sent to the client, in ms. `null` sends none. Defaults to 2000. */
+    retry?: number | null;
+    /** Comment-frame interval that keeps proxies from closing an idle stream. Defaults to 15s. */
+    keepAlive?: { interval: number } | false;
+    /** Extra response headers. */
+    headers?: Record<string, string>;
     backpressure?: BackpressureOptions;
     maxDuration?: number;
 }
+
+export const SESSION_DEFAULTS: Required<Pick<SessionOptions, 'retry' | 'keepAlive' | 'headers'>> = {
+    retry: 2000,
+    keepAlive: { interval: 15_000 },
+    headers: {},
+};
 
 export const readLastEventId = (request: Request): string => {
     const raw = request.headers['last-event-id'];
@@ -59,9 +68,10 @@ export class Session {
         this.connectedAt = Date.now();
         this.lastEventId = readLastEventId(options.request);
         this.#buffer = new EventBuffer();
-        this.#retry = options.retry;
-        this.#keepAlive = options.keepAlive;
-        this.#headers = options.headers;
+        // `null` disables retry, so only an absent value takes the default.
+        this.#retry = options.retry === undefined ? SESSION_DEFAULTS.retry : options.retry;
+        this.#keepAlive = options.keepAlive ?? SESSION_DEFAULTS.keepAlive;
+        this.#headers = options.headers ?? SESSION_DEFAULTS.headers;
         this.#backpressure = options.backpressure;
         this.#maxDuration = options.maxDuration;
         this.#stream.once('close', () => this.close());

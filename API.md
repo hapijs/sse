@@ -351,7 +351,7 @@ server.route({
                 return job.result;
             }
 
-            const session = new Session({ request, retry: null, keepAlive: { interval: 15_000 }, headers: {} });
+            const session = new Session({ request });
 
             session.initialize();
             job.on('progress', (update) => session.push(update, 'progress'));
@@ -364,16 +364,16 @@ server.route({
 });
 ```
 
-Constructing a session writes nothing, so a handler can create one, keep working, and still return something else. Call `initialize()` before `push()`, and `close()` on a session you do not return. Replay needs a subscription, so it does not apply here.
+Create the session on the branch that streams, then call `initialize()` before `push()`. Replay needs a subscription, so it does not apply here.
 
 **Session options:**
 
 | Option         | Type                            | Description                                                                 |
 | -------------- | ------------------------------- | --------------------------------------------------------------------------- |
 | `request`      | `Request`                       | Required. The hapi request.                                                 |
-| `retry`        | `number \| null`                | Required. Client reconnect delay in ms. `null` sends no `retry` field. The 1000 ms floor applies only to plugin and handler options.      |
-| `keepAlive`    | `{ interval: number } \| false` | Required. Comment interval, started by `initialize()`.                      |
-| `headers`      | `Record<string, string>`        | Required. Extra response headers.                                           |
+| `retry`        | `number \| null`                | Client reconnect delay in ms (default: `2000`). `null` sends no `retry` field. The 1000 ms floor applies only to plugin and handler options. |
+| `keepAlive`    | `{ interval: number } \| false` | Comment interval, started by `initialize()` (default: `{ interval: 15_000 }`). |
+| `headers`      | `Record<string, string>`        | Extra response headers (default: `{}`).                                     |
 | `backpressure` | `BackpressureOptions`           | See [Backpressure](#backpressure). Plugin-level settings do not apply here, so a session without this has no limit.                                          |
 | `maxDuration`  | `number`                        | Maximum connection lifetime in ms (with ±10% jitter).                       |
 
