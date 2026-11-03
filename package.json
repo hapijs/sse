@@ -17,7 +17,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "build": "tsdown",
-    "prepublishOnly": "node --run build"
+    "prepare": "node --run build"
   },
   "keywords": [
     "hapi",
